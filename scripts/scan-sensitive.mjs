@@ -29,6 +29,10 @@ const alwaysSkipDirs = new Set(['.git', 'node_modules', 'data']);
 const buildSkipDirs = new Set(['dist', 'staging', 'artifacts', 'release']);
 const textExt = new Set(['.ts', '.js', '.mjs', '.json', '.md', '.html', '.css', '.yml', '.yaml', '.txt', '.example', '.iss']);
 
+function normalizeRel(path) {
+  return path.replaceAll('\\', '/');
+}
+
 function extOf(path) {
   const index = path.lastIndexOf('.');
   return index >= 0 ? path.slice(index) : '';
@@ -37,7 +41,7 @@ function extOf(path) {
 function walk(dir, files = []) {
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
-    const rel = relative(root, path);
+    const rel = normalizeRel(relative(root, path));
     const stat = statSync(path);
     if (stat.isDirectory()) {
       if (!alwaysSkipDirs.has(entry) && (includeBuild || !buildSkipDirs.has(entry))) walk(path, files);
