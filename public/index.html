@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Hunter — AI 岗位评估</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-left">
+      <h1>Job Hunter</h1>
+      <span class="subtitle">本地岗位抓取与匹配评估 · Windows 公共版</span>
+    </div>
+    <div class="header-right">
+      <button id="btn-refresh" class="btn btn-secondary">刷新数据</button>
+      <button id="btn-rescore" class="btn btn-secondary">重新评分</button>
+      <button id="btn-setup" class="btn btn-secondary">设置</button>
+      <button class="btn btn-secondary" data-login-source="boss">打开 BOSS 登录</button>
+      <button class="btn btn-secondary" data-login-source="liepin">打开猎聘登录</button>
+      <button class="btn btn-secondary" data-login-source="zhaopin">打开智联登录</button>
+      <button class="btn btn-primary" data-crawl-source="boss">抓取 BOSS</button>
+      <button class="btn btn-primary" data-crawl-source="liepin">抓取猎聘</button>
+      <button class="btn btn-primary" data-crawl-source="zhaopin">抓取智联</button>
+    </div>
+  </header>
+
+  <!-- 状态条 -->
+  <div id="status-bar" class="status-bar hidden">
+    <span class="status-dot"></span>
+    <span id="status-text">就绪</span>
+  </div>
+
+  <!-- 筛选栏 -->
+  <div class="toolbar">
+    <div class="filter-group">
+      <label>岗位状态</label>
+      <div class="filter-chips" id="filter-lifecycle">
+        <button class="chip active" data-value="active">当前岗位</button>
+        <button class="chip" data-value="archived">历史岗位</button>
+        <button class="chip" data-value="all">全部</button>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>评级</label>
+      <div class="filter-chips" id="filter-grade">
+        <button class="chip active" data-value="all">全部</button>
+        <button class="chip" data-value="A">A</button>
+        <button class="chip" data-value="B">B</button>
+        <button class="chip" data-value="C">C</button>
+        <button class="chip" data-value="D">D</button>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>来源</label>
+      <div class="filter-chips" id="filter-source">
+        <button class="chip active" data-value="all">全部</button>
+        <button class="chip" data-value="boss">BOSS直聘</button>
+        <button class="chip" data-value="liepin">猎聘</button>
+        <button class="chip" data-value="zhaopin">智联</button>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>排序</label>
+      <select id="sort-select" class="select">
+        <option value="priority-desc">投递优先</option>
+        <option value="score-desc">总分降序</option>
+        <option value="fresh-desc">最近发现优先</option>
+        <option value="salary-desc">薪资降序</option>
+        <option value="salary-asc">薪资升序</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>抓取词组</label>
+      <div class="filter-chips" id="crawl-keyword-preset">
+        <button class="chip active" data-value="primary">AI综合</button>
+        <button class="chip" data-value="product">产品/运营</button>
+      </div>
+    </div>
+    <div class="filter-group flex-grow">
+      <label>搜索</label>
+      <input type="text" id="search-input" class="input" placeholder="搜索标题/公司/技能..." />
+    </div>
+  </div>
+
+  <!-- 统计概览 -->
+  <div class="stats-row" id="stats-row">
+    <!-- JS 动态填充 -->
+  </div>
+
+  <!-- 岗位表格 -->
+  <div class="table-container">
+    <table class="job-table">
+      <thead>
+        <tr>
+          <th class="col-grade">评级</th>
+          <th class="col-score">总分</th>
+          <th class="col-company-score">公司分</th>
+          <th class="col-title">岗位标题</th>
+          <th class="col-company">公司</th>
+          <th class="col-contact">沟通</th>
+          <th class="col-salary">薪资</th>
+          <th class="col-location">地点</th>
+          <th class="col-source">来源</th>
+          <th class="col-seen">最近发现</th>
+          <th class="col-expand"></th>
+        </tr>
+      </thead>
+      <tbody id="job-tbody">
+      </tbody>
+    </table>
+    <div id="empty-state" class="empty-state hidden">
+      <p id="empty-title">暂无数据</p>
+      <p id="empty-hint" class="muted">点击任一平台抓取按钮获取岗位，或用 <code>npm run mock</code> 生成测试数据</p>
+    </div>
+  </div>
+
+  <!-- 详情面板（侧滑） -->
+  <div id="detail-overlay" class="detail-overlay hidden">
+    <div class="detail-panel" id="detail-panel">
+      <!-- JS 动态填充 -->
+    </div>
+  </div>
+
+  <div id="setup-overlay" class="modal-overlay hidden">
+    <div class="modal-panel" id="setup-modal">
+      <!-- JS 动态填充 -->
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

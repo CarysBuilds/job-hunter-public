@@ -1,0 +1,41 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run scan:sensitive
+      - run: npm run package:windows
+      - name: Build installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
+        env:
+          JOB_HUNTER_STAGE: ${{ github.workspace }}\staging\windows
+          JOB_HUNTER_OUTPUT: ${{ github.workspace }}\artifacts\windows
+        with:
+          path: packaging/windows/JobHunter.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JobHunter-Setup-x64
+          path: artifacts/windows/JobHunter-Setup-x64.exe
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/windows/JobHunter-Setup-x64.exe

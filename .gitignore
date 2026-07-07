@@ -1,0 +1,17 @@
+node_modules/
+dist/
+staging/
+artifacts/
+release/
+data/cookies/
+data/auth/
+data/diagnostics/
+data/profile/
+data/*.sqlite*
+data/*.db
+data/*.json
+!data/.gitkeep
+.env
+.env.local
+*.log
+.DS_Store

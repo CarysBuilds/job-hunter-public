@@ -1,0 +1,49 @@
+{
+  "name": "job-hunter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows-first local job discovery and matching assistant",
+  "license": "MIT",
+  "homepage": "https://github.com/your-org/job-hunter-public#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/job-hunter-public.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/job-hunter-public/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "login": "tsx src/scripts/login.ts",
+    "crawl": "tsx src/index.ts --crawl-only",
+    "test": "node --import ./test/setup-env.mjs --import tsx --test test/*.test.ts",
+    "scan:sensitive": "node scripts/scan-sensitive.mjs",
+    "package:windows": "node scripts/package-windows.mjs",
+    "mock": "tsx src/scripts/seed.ts",
+    "service:install": "npm run build && tsx src/scripts/service.ts install",
+    "service:status": "tsx src/scripts/service.ts status",
+    "service:restart": "npm run build && tsx src/scripts/service.ts restart",
+    "service:logs": "tsx src/scripts/service.ts logs",
+    "service:uninstall": "tsx src/scripts/service.ts uninstall"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "openai": "^4.77.0",
+    "playwright": "^1.49.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^24.13.2",
+    "@types/qs": "^6.15.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
