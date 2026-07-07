@@ -5,6 +5,7 @@ Most configuration is available from the web setup screen.
 Advanced environment variables can be placed in `.env` during development:
 
 - `PORT`
+- `APP_HOST` (defaults to `127.0.0.1`; only `127.0.0.1`, `localhost`, and `::1` are accepted)
 - `APP_DATA_DIR`
 - `LLM_ENABLED`
 - `LLM_API_BASE`

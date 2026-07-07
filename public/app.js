@@ -416,6 +416,43 @@
     return [...form.querySelectorAll('input[name="targetTracks"]:checked')].map((input) => input.value);
   }
 
+  function setupInput(labelText, name, value, attrs = {}) {
+    const label = make('label');
+    label.append(document.createTextNode(labelText));
+    const input = make('input', 'input');
+    input.name = name;
+    input.value = String(value ?? '');
+    Object.entries(attrs).forEach(([key, attrValue]) => {
+      if (attrValue !== undefined) input.setAttribute(key, String(attrValue));
+    });
+    label.append(input);
+    return label;
+  }
+
+  function setupSelect(labelText, name, options) {
+    const label = make('label');
+    label.append(document.createTextNode(labelText));
+    const select = make('select', 'select');
+    select.name = name;
+    options.forEach(([value, text]) => {
+      const option = make('option', '', text);
+      option.value = value;
+      select.append(option);
+    });
+    label.append(select);
+    return label;
+  }
+
+  function setupTrack(value, text) {
+    const label = make('label');
+    const input = make('input');
+    input.type = 'checkbox';
+    input.name = 'targetTracks';
+    input.value = value;
+    label.append(input, document.createTextNode(` ${text}`));
+    return label;
+  }
+
   async function openSetup() {
     const [config, profilePayload] = await Promise.all([api('/api/config'), api('/api/profile')]);
     const settings = config.settings;
@@ -433,32 +470,35 @@
     modal.append(close, header);
 
     const form = make('form', 'setup-form');
-    form.innerHTML = `
-      <label>城市码<input name="cityCode" class="input" value="${settings.cityCode || '101010100'}" /></label>
-      <label>关键词<input name="keywords" class="input" value="${(settings.keywords || DEFAULT_KEYWORDS).join(',')}" /></label>
-      <label>求职阶段
-        <select name="careerStage" class="select">
-          <option value="experienced">社招</option>
-          <option value="career_change">转岗</option>
-          <option value="new_grad">应届</option>
-          <option value="internship">实习</option>
-        </select>
-      </label>
-      <label>经验年限<input name="experienceYears" class="input" type="number" min="0" max="50" value="${profile.experienceYears ?? 3}" /></label>
-      <label>最低月薪 K<input name="salaryFloorK" class="input" type="number" min="0" max="300" value="${profile.salaryFloorK ?? 0}" /></label>
-      <label>期望月薪 K<input name="salaryExpectK" class="input" type="number" min="0" max="500" value="${profile.salaryExpectK ?? 0}" /></label>
-      <label>偏好城市<input name="cities" class="input" value="${Object.keys(profile.locationScore || {}).join(',')}" /></label>
-      <div class="setup-tracks">
-        <span>目标方向</span>
-        <label><input type="checkbox" name="targetTracks" value="ai_solutions" /> AI解决方案</label>
-        <label><input type="checkbox" name="targetTracks" value="ai_product" /> AI产品</label>
-        <label><input type="checkbox" name="targetTracks" value="ai_customer_success" /> 客户成功</label>
-        <label><input type="checkbox" name="targetTracks" value="ai_application" /> AI应用开发</label>
-      </div>
-      <label>模型 API Base<input name="llmBaseURL" class="input" value="${settings.llm?.baseURL || ''}" /></label>
-      <label>模型名称<input name="llmModel" class="input" value="${settings.llm?.model || ''}" /></label>
-      <label>模型 API Key<input name="llmApiKey" class="input" type="password" placeholder="${settings.llm?.apiKey ? '已配置，留空则保持不变' : ''}" /></label>
-    `;
+    const tracks = make('div', 'setup-tracks');
+    tracks.append(
+      make('span', '', '目标方向'),
+      setupTrack('ai_solutions', 'AI解决方案'),
+      setupTrack('ai_product', 'AI产品'),
+      setupTrack('ai_customer_success', '客户成功'),
+      setupTrack('ai_application', 'AI应用开发'),
+    );
+    form.append(
+      setupInput('城市码', 'cityCode', settings.cityCode || '101010100'),
+      setupInput('关键词', 'keywords', (settings.keywords || DEFAULT_KEYWORDS).join(',')),
+      setupSelect('求职阶段', 'careerStage', [
+        ['experienced', '社招'],
+        ['career_change', '转岗'],
+        ['new_grad', '应届'],
+        ['internship', '实习'],
+      ]),
+      setupInput('经验年限', 'experienceYears', profile.experienceYears ?? 3, { type: 'number', min: 0, max: 50 }),
+      setupInput('最低月薪 K', 'salaryFloorK', profile.salaryFloorK ?? 0, { type: 'number', min: 0, max: 300 }),
+      setupInput('期望月薪 K', 'salaryExpectK', profile.salaryExpectK ?? 0, { type: 'number', min: 0, max: 500 }),
+      setupInput('偏好城市', 'cities', Object.keys(profile.locationScore || {}).join(',')),
+      tracks,
+      setupInput('模型 API Base', 'llmBaseURL', settings.llm?.baseURL || ''),
+      setupInput('模型名称', 'llmModel', settings.llm?.model || ''),
+      setupInput('模型 API Key', 'llmApiKey', '', {
+        type: 'password',
+        placeholder: settings.llm?.apiKey ? '已配置，留空则保持不变' : '',
+      }),
+    );
     form.querySelector('[name="careerStage"]').value = profile.careerStage || 'experienced';
     (profile.targetTracks || []).forEach((track) => {
       const checkbox = form.querySelector(`input[name="targetTracks"][value="${track}"]`);

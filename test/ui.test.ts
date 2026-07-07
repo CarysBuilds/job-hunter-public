@@ -63,6 +63,38 @@ after(async () => {
 });
 
 describe('前端生命周期烟测', () => {
+  it('设置弹窗把已保存配置作为表单值渲染而不是 HTML', async () => {
+    const payload = '"><svg onload=x=1>';
+    const configResponse = await fetch(`${origin}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cityCode: '101010100', keywords: [payload], setupCompleted: true }),
+    });
+    assert.equal(configResponse.status, 200);
+    const profileResponse = await fetch(`${origin}/api/profile`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        careerStage: 'experienced',
+        targetTracks: ['ai_solutions'],
+        experienceYears: 3,
+        locationScore: { [payload]: 5 },
+      }),
+    });
+    assert.equal(profileResponse.status, 200);
+
+    const page = await browser.newPage();
+    await page.goto(origin, { waitUntil: 'networkidle' });
+    await page.evaluate(() => { (window as unknown as { x: number }).x = 0; });
+    await page.locator('#btn-setup').click();
+    await page.waitForSelector('#setup-overlay:not(.hidden)');
+    await page.waitForTimeout(150);
+    assert.equal(await page.evaluate(() => (window as unknown as { x: number }).x), 0);
+    assert.equal(await page.locator('input[name="keywords"]').inputValue(), payload);
+    assert.equal(await page.locator('input[name="cities"]').inputValue(), payload);
+    await page.close();
+  });
+
   it('首页可渲染、可切换历史岗位，并在详情显示发现时间', async () => {
     const page = await browser.newPage();
     await page.goto(origin, { waitUntil: 'networkidle' });

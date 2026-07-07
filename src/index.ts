@@ -1,4 +1,5 @@
 import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appConfig, getCrawlConfig } from './config.js';
@@ -11,6 +12,8 @@ import type { JobSource } from './types.js';
 
 const SOURCES = ['boss', 'liepin', 'zhaopin'] as const;
 const SOURCE_LABELS: Record<JobSource, string> = { boss: 'BOSS', liepin: '猎聘', zhaopin: '智联' };
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function readArg(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -21,6 +24,38 @@ function readSource(): JobSource {
   const source = readArg('--source') ?? 'boss';
   if (!SOURCES.includes(source as JobSource)) throw new Error('source 仅支持 boss、liepin、zhaopin');
   return source as JobSource;
+}
+
+function hostNameFromHeader(hostHeader: string | undefined): string {
+  if (!hostHeader) return '';
+  if (hostHeader.startsWith('[')) return hostHeader.slice(0, hostHeader.indexOf(']') + 1);
+  return hostHeader.split(':')[0] ?? '';
+}
+
+function isLocalOrigin(value: string | undefined): boolean {
+  if (!value) return true;
+  try {
+    return LOCAL_HOSTNAMES.has(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function localAccessGuard(req: Request, res: Response, next: NextFunction): void {
+  const hostName = hostNameFromHeader(req.headers.host);
+  if (!LOCAL_HOSTNAMES.has(hostName)) {
+    res.status(403).json({ ok: false, error: '仅允许本机访问' });
+    return;
+  }
+  if (WRITE_METHODS.has(req.method) && !isLocalOrigin(req.headers.origin)) {
+    res.status(403).json({ ok: false, error: '仅允许本机页面发起写操作' });
+    return;
+  }
+  next();
+}
+
+function displayHost(host: string): string {
+  return host === '::1' ? '[::1]' : host;
 }
 
 export function createApp(dependencies: {
@@ -35,6 +70,7 @@ export function createApp(dependencies: {
   const detailRefresher = dependencies.detailRefresher ?? getDetailRefresher();
   const app = express();
   app.disable('x-powered-by');
+  app.use(localAccessGuard);
   app.use(express.json({ limit: '200kb' }));
   app.use('/api', createRouter(store, runs, greeting, detailRefresher));
   app.use(express.static(appConfig.publicDir, {
@@ -66,9 +102,9 @@ async function main(): Promise<void> {
   if (migrated) console.log(`[storage] 已从 jobs.json 迁移 ${migrated} 条岗位`);
   if (process.argv.includes('--crawl-only')) return crawlOnly();
   const app = createApp();
-  const server = app.listen(appConfig.port, () => {
+  const server = app.listen(appConfig.port, appConfig.host, () => {
     const counts = store.lifecycleCounts();
-    console.log(`[server] ${new Date().toISOString()} Job Hunter：http://localhost:${appConfig.port}；当前 ${counts.active} 条，历史 ${counts.archived} 条`);
+    console.log(`[server] ${new Date().toISOString()} Job Hunter：http://${displayHost(appConfig.host)}:${appConfig.port}；当前 ${counts.active} 条，历史 ${counts.archived} 条`);
   });
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals) => {

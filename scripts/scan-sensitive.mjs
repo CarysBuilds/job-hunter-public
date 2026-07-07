@@ -24,7 +24,9 @@ const denyContent = [
   /真实发送/,
   /批量打招呼/,
 ];
-const skipDirs = new Set(['.git', 'node_modules', 'dist', 'staging', 'artifacts', 'release', 'data']);
+const includeBuild = process.argv.includes('--include-build') || process.env.SCAN_SENSITIVE_INCLUDE_BUILD === '1';
+const alwaysSkipDirs = new Set(['.git', 'node_modules', 'data']);
+const buildSkipDirs = new Set(['dist', 'staging', 'artifacts', 'release']);
 const textExt = new Set(['.ts', '.js', '.mjs', '.json', '.md', '.html', '.css', '.yml', '.yaml', '.txt', '.example', '.iss']);
 
 function extOf(path) {
@@ -38,7 +40,7 @@ function walk(dir, files = []) {
     const rel = relative(root, path);
     const stat = statSync(path);
     if (stat.isDirectory()) {
-      if (!skipDirs.has(entry)) walk(path, files);
+      if (!alwaysSkipDirs.has(entry) && (includeBuild || !buildSkipDirs.has(entry))) walk(path, files);
       continue;
     }
     files.push(rel);

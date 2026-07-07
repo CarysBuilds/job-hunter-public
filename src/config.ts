@@ -33,6 +33,7 @@ function defaultDataDir(): string {
 
 const EnvSchema = z.object({
   PORT: intFromString(3000, 1, 65535),
+  APP_HOST: z.enum(['127.0.0.1', 'localhost', '::1']).default('127.0.0.1'),
   APP_DATA_DIR: z.string().default(defaultDataDir()),
   LLM_API_BASE: z.string().url().default('https://api.deepseek.com/v1'),
   LLM_API_KEY: z.string().default(''),
@@ -117,7 +118,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   llm: {
     enabled: parsed.LLM_ENABLED,
     baseURL: parsed.LLM_API_BASE,
-    apiKey: parsed.LLM_API_KEY,
+    apiKey: '',
     model: parsed.LLM_MODEL,
     timeoutMs: parsed.LLM_TIMEOUT_MS,
   },
@@ -247,6 +248,7 @@ export function getCandidateResumePath(): string {
 
 export const appConfig = {
   port: parsed.PORT,
+  host: parsed.APP_HOST,
   dataDir: DATA_DIR,
   databasePath: resolve(DATA_DIR, 'job-hunter.sqlite'),
   legacyJobsPath: resolve(DATA_DIR, 'jobs.json'),

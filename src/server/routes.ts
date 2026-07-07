@@ -23,7 +23,7 @@ import {
   UnsupportedDetailRefreshError,
   type DetailRefresher,
 } from '../services/detail-refresh-service.js';
-import type { ContactStatus, Grade, JobFilters, JobSource, RawJob, ScoredJob } from '../types.js';
+import type { ContactStatus, Grade, JobFilters, JobSource, RawJob, ScoredJob, UserSettings } from '../types.js';
 import type { JobStore } from './store.js';
 
 const APP_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
@@ -100,6 +100,16 @@ function sendValidationError(res: Response, error: z.ZodError): void {
   res.status(400).json({ ok: false, error: error.issues.map((issue) => issue.message).join('；') });
 }
 
+function redactUserSettings(settings: UserSettings): UserSettings {
+  return {
+    ...settings,
+    llm: {
+      ...settings.llm,
+      apiKey: settings.llm.apiKey ? 'configured' : '',
+    },
+  };
+}
+
 function rawFromScored(job: ScoredJob): RawJob {
   return {
     title: job.title,
@@ -156,8 +166,8 @@ export function createRouter(
     res.json({
       ok: true,
       data: {
-        defaults: DEFAULT_USER_SETTINGS,
-        settings: { ...settings, llm: { ...settings.llm, apiKey: settings.llm.apiKey ? 'configured' : '' } },
+        defaults: redactUserSettings(DEFAULT_USER_SETTINGS),
+        settings: redactUserSettings(settings),
       },
     });
   });
@@ -173,7 +183,7 @@ export function createRouter(
       llm: { ...current.llm, ...parsed.data.llm },
       setupCompleted: parsed.data.setupCompleted ?? true,
     });
-    res.json({ ok: true, data: { ...next, llm: { ...next.llm, apiKey: next.llm.apiKey ? 'configured' : '' } } });
+    res.json({ ok: true, data: redactUserSettings(next) });
   });
 
   router.get('/profile', (_req: Request, res: Response) => {

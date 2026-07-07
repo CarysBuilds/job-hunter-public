@@ -23,6 +23,7 @@ jobs:
       - run: npm run build
       - run: npm run scan:sensitive
       - run: npm run package:windows
+      - run: npm run scan:sensitive -- --include-build
       - name: Build installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
         env:

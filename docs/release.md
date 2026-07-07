@@ -8,6 +8,7 @@ Before publishing:
 4. `npm run build`
 5. `npm run scan:sensitive`
 6. `npm run package:windows`
+7. `npm run scan:sensitive -- --include-build`
 
 Check the installer contents:
 

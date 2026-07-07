@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import type { Server } from 'node:http';
+import { request, type Server } from 'node:http';
 import { createApp } from '../src/index.js';
 import { RunService } from '../src/services/run-service.js';
 import { scoreJob } from '../src/scorer/index.js';
@@ -59,6 +59,7 @@ const runs = {
 const app = createApp({ store, runs, greeting });
 let server: Server;
 let origin: string;
+let port: number;
 
 before(async () => {
   store.upsertJobs([await scoreJob({
@@ -77,7 +78,8 @@ before(async () => {
     server = app.listen(0, '127.0.0.1', () => {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('无法获取测试端口');
-      origin = `http://127.0.0.1:${address.port}`;
+      port = address.port;
+      origin = `http://127.0.0.1:${port}`;
       resolve();
     });
   });
@@ -90,6 +92,25 @@ after(async () => {
 });
 
 describe('HTTP API', () => {
+  function requestWithHost(host: string): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = request({
+        host: '127.0.0.1',
+        port,
+        path: '/api/health',
+        method: 'GET',
+        headers: { host },
+      }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
   it('查询岗位并使用稳定 ID 获取详情', async () => {
     const list = await fetch(`${origin}/api/jobs?q=Agent`).then((response) => response.json());
     assert.equal(list.ok, true);
@@ -150,6 +171,26 @@ describe('HTTP API', () => {
     assert.equal((await fetch(`${origin}/api/status`)).status, 200);
   });
 
+  it('拒绝非本机 Host 和跨站写操作', async () => {
+    const hostResponse = await requestWithHost('example.com');
+    assert.equal(hostResponse.status, 403);
+    assert.match(JSON.parse(hostResponse.body).error, /本机/);
+
+    const crossOrigin = await fetch(`${origin}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: 'https://example.com' },
+      body: JSON.stringify({ cityCode: '101010100', keywords: ['AI'] }),
+    });
+    assert.equal(crossOrigin.status, 403);
+
+    const localOrigin = await fetch(`${origin}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin },
+      body: JSON.stringify({ cityCode: '101010100', keywords: ['AI'] }),
+    });
+    assert.equal(localOrigin.status, 200);
+  });
+
   it('返回简历/API 状态并生成岗位打招呼文案', async () => {
     const profile = await fetch(`${origin}/api/profile/status`).then((response) => response.json());
     assert.equal(profile.data.resumeConfigured, true);
@@ -166,12 +207,29 @@ describe('HTTP API', () => {
   it('支持读取并保存公开版配置和用户画像', async () => {
     const setup = await fetch(`${origin}/api/setup/status`).then((response) => response.json());
     assert.equal(setup.ok, true);
+    const initialConfig = await fetch(`${origin}/api/config`).then((response) => response.json());
+    assert.notEqual(initialConfig.data.defaults.llm.apiKey, 'env-key-should-not-leak');
+    assert.equal(initialConfig.data.defaults.llm.apiKey, '');
+
     const configResponse = await fetch(`${origin}/api/config`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cityCode: '101010100', keywords: ['产品经理'], setupCompleted: true }),
+      body: JSON.stringify({
+        cityCode: '101010100',
+        keywords: ['产品经理'],
+        setupCompleted: true,
+        llm: { apiKey: 'saved-key-should-not-leak', baseURL: 'https://api.example.com/v1', model: 'test-model' },
+      }),
     });
     assert.equal(configResponse.status, 200);
+    const savedConfig = await configResponse.json();
+    assert.equal(savedConfig.data.llm.apiKey, 'configured');
+    assert.ok(!JSON.stringify(savedConfig).includes('saved-key-should-not-leak'));
+
+    const reloadedConfig = await fetch(`${origin}/api/config`).then((response) => response.json());
+    assert.equal(reloadedConfig.data.settings.llm.apiKey, 'configured');
+    assert.ok(!JSON.stringify(reloadedConfig).includes('saved-key-should-not-leak'));
+
     const profileResponse = await fetch(`${origin}/api/profile`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
