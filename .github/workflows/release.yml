@@ -20,7 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      - run: npm run test:ci
       - run: npm run build
       - run: npm run scan:sensitive
       - run: npm run package:windows
