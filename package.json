@@ -4,13 +4,13 @@
   "private": true,
   "description": "Windows-first local job discovery and matching assistant",
   "license": "MIT",
-  "homepage": "https://github.com/your-org/job-hunter-public#readme",
+  "homepage": "https://github.com/CarysBuilds/job-hunter-public#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/job-hunter-public.git"
+    "url": "https://github.com/CarysBuilds/job-hunter-public.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/job-hunter-public/issues"
+    "url": "https://github.com/CarysBuilds/job-hunter-public/issues"
   },
   "type": "module",
   "engines": {
