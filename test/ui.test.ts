@@ -58,6 +58,7 @@ before(async () => {
 after(async () => {
   await browser.close();
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  server.closeAllConnections();
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });

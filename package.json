@@ -23,7 +23,7 @@
     "start": "node dist/index.js",
     "login": "tsx src/scripts/login.ts",
     "crawl": "tsx src/index.ts --crawl-only",
-    "test": "node --import ./test/setup-env.mjs --import tsx --test test/*.test.ts",
+    "test": "node --import ./test/setup-env.mjs --import tsx --test --test-timeout=120000 --test-force-exit test/*.test.ts",
     "scan:sensitive": "node scripts/scan-sensitive.mjs",
     "package:windows": "node scripts/package-windows.mjs",
     "mock": "tsx src/scripts/seed.ts",
