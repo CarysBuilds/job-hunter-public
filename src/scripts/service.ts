@@ -33,10 +33,15 @@ function xml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
+function appendPath(base: string, ...parts: string[]): string {
+  const separator = base.includes('\\') ? '\\' : '/';
+  return [base.replace(/[\\/]+$/, ''), ...parts].join(separator);
+}
+
 export function renderLaunchAgentPlist(paths: ServicePaths): string {
-  const serverScript = resolve(paths.projectRoot, 'dist', 'index.js');
-  const outLog = resolve(paths.logsDir, 'server.out.log');
-  const errLog = resolve(paths.logsDir, 'server.err.log');
+  const serverScript = appendPath(paths.projectRoot, 'dist', 'index.js');
+  const outLog = appendPath(paths.logsDir, 'server.out.log');
+  const errLog = appendPath(paths.logsDir, 'server.err.log');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
