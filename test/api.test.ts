@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,8 @@ import { RunService } from '../src/services/run-service.js';
 import { scoreJob } from '../src/scorer/index.js';
 import { JobStore } from '../src/server/store.js';
 import type { GreetingGenerator } from '../src/services/greeting-service.js';
+
+const APP_VERSION = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
 
 const dir = mkdtempSync(join(tmpdir(), 'job-hunter-api-'));
 const store = new JobStore(join(dir, 'api.sqlite'));
@@ -134,7 +137,7 @@ describe('HTTP API', () => {
     const response = await fetch(`${origin}/api/health`);
     const result = await response.json();
     assert.equal(response.status, 200);
-    assert.equal(result.data.version, '0.1.0');
+    assert.equal(result.data.version, APP_VERSION);
     assert.equal(typeof result.data.uptimeSeconds, 'number');
     assert.deepEqual(result.data.jobs, { active: 1, archived: 1, total: 2 });
     assert.equal(result.data.task, null);
