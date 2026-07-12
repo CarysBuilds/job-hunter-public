@@ -2,17 +2,10 @@
   'use strict';
 
   const KEYWORD_PRESETS = {
-    primary: {
-      label: 'AI综合',
-      keywords: ['AI产品经理', 'AI解决方案顾问', '大模型解决方案', 'AI客户成功', 'AI实施顾问', '数字化解决方案顾问'],
-    },
-    product: {
-      label: '产品/运营',
-      keywords: ['产品经理', '产品运营', '客户成功经理', '实施顾问', '业务流程顾问', 'SaaS解决方案顾问'],
-    },
+    custom: { label: '自定义关键词', keywords: [] },
   };
-  const DEFAULT_KEYWORDS = KEYWORD_PRESETS.primary.keywords;
-  const state = { jobs: [], lifecycle: 'active', grade: 'all', source: 'all', sort: 'priority-desc', query: '', keywordPreset: 'primary', polling: false, settings: null, profile: null };
+  const DEFAULT_KEYWORDS = ['产品经理'];
+  const state = { jobs: [], lifecycle: 'active', grade: 'all', source: 'all', sort: 'priority-desc', query: '', keywordPreset: 'custom', polling: false, settings: null, profile: null };
   let loadSequence = 0;
   const byId = (id) => document.getElementById(id);
   const elements = {
@@ -219,7 +212,7 @@
 
   function greetingSection(job) {
     const box = make('div', 'greeting-card');
-    const note = make('p', 'greeting-note', '使用本地简历与当前 JD 调用已配置的模型 API；公开版只生成草稿，不会自动发送。');
+    const note = make('p', 'greeting-note', '生成前请先在“设置”中上传简历内容并填写模型 API Key。系统使用本地简历与当前 JD 生成草稿，不会自动发送。');
     const actions = make('div', 'greeting-actions');
     const generate = make('button', 'btn btn-primary', '生成打招呼草稿');
     generate.type = 'button';
@@ -404,8 +397,9 @@
 
   function getSelectedKeywordPreset() {
     const active = byId('crawl-keyword-preset')?.querySelector('button[data-value].active');
-    const key = active?.dataset.value || state.keywordPreset || 'primary';
-    return KEYWORD_PRESETS[key] || KEYWORD_PRESETS.primary;
+    const key = active?.dataset.value || state.keywordPreset || 'custom';
+    const preset = KEYWORD_PRESETS[key] || KEYWORD_PRESETS.custom;
+    return { ...preset, keywords: state.settings?.keywords || preset.keywords };
   }
 
   function closeSetup() {
@@ -454,7 +448,7 @@
   }
 
   async function openSetup() {
-    const [config, profilePayload] = await Promise.all([api('/api/config'), api('/api/profile')]);
+    const [config, profilePayload, resumePayload] = await Promise.all([api('/api/config'), api('/api/profile'), api('/api/resume')]);
     const settings = config.settings;
     const profile = profilePayload.profile;
     state.settings = settings;
@@ -466,21 +460,26 @@
     close.setAttribute('aria-label', '关闭');
     close.addEventListener('click', closeSetup);
     const header = make('div', 'modal-header');
-    header.append(make('h2', '', '初始设置'), make('p', 'muted', '这些信息只保存在本机，用来决定抓取关键词和评分偏好。'));
+    header.append(make('h2', '', '初始设置'), make('p', 'muted', '关键词决定平台实际搜索什么岗位；目标方向只影响抓取结果的匹配评分，两者不重复。所有内容仅保存在本机。'));
     modal.append(close, header);
 
     const form = make('form', 'setup-form');
     const tracks = make('div', 'setup-tracks');
     tracks.append(
       make('span', '', '目标方向'),
-      setupTrack('ai_solutions', 'AI解决方案'),
-      setupTrack('ai_product', 'AI产品'),
-      setupTrack('ai_customer_success', '客户成功'),
-      setupTrack('ai_application', 'AI应用开发'),
+      setupTrack('product', '产品'),
+      setupTrack('engineering', '技术/研发'),
+      setupTrack('operations', '运营/增长'),
+      setupTrack('design', '设计/创意'),
+      setupTrack('data', '数据/分析'),
+      setupTrack('consulting', '咨询/解决方案/实施'),
+      setupTrack('customer_service', '客户成功/服务'),
+      setupTrack('pure_sales', '销售/商务'),
+      setupTrack('other', '其他方向'),
     );
     form.append(
-      setupInput('城市码', 'cityCode', settings.cityCode || '101010100'),
-      setupInput('关键词', 'keywords', (settings.keywords || DEFAULT_KEYWORDS).join(',')),
+      setupInput('抓取城市（直接填写城市名，多个城市用逗号分隔，最多 5 个）', 'crawlCities', (settings.cities || ['北京']).join(',')),
+      setupInput('抓取关键词（平台会按每个关键词逐一搜索，逗号分隔）', 'keywords', (settings.keywords || DEFAULT_KEYWORDS).join(',')),
       setupSelect('求职阶段', 'careerStage', [
         ['experienced', '社招'],
         ['career_change', '转岗'],
@@ -499,6 +498,15 @@
         placeholder: settings.llm?.apiKey ? '已配置，留空则保持不变' : '',
       }),
     );
+    const resumeLabel = make('label');
+    resumeLabel.append(document.createTextNode('简历内容（保存到 data/profile/resume.md）'));
+    const resume = make('textarea', 'input resume-input');
+    resume.name = 'resume';
+    resume.rows = 10;
+    resume.placeholder = '粘贴你的简历正文，至少 80 个字符';
+    resume.value = resumePayload.content || '';
+    resumeLabel.append(resume);
+    form.append(resumeLabel);
     form.querySelector('[name="careerStage"]').value = profile.careerStage || 'experienced';
     (profile.targetTracks || []).forEach((track) => {
       const checkbox = form.querySelector(`input[name="targetTracks"][value="${track}"]`);
@@ -517,6 +525,7 @@
       save.disabled = true;
       const data = new FormData(form);
       const keywords = String(data.get('keywords') || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const crawlCities = String(data.get('crawlCities') || '').split(/[,，]/).map((item) => item.trim()).filter(Boolean);
       const cities = String(data.get('cities') || '').split(',').map((item) => item.trim()).filter(Boolean);
       const locationScore = Object.fromEntries(cities.map((city) => [city, 5]));
       const targetTracks = selectedTracksFromForm(form);
@@ -526,7 +535,7 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             setupCompleted: true,
-            cityCode: String(data.get('cityCode') || '101010100').trim(),
+            cities: crawlCities.length ? crawlCities : ['北京'],
             keywords: keywords.length ? keywords : DEFAULT_KEYWORDS,
             llm: {
               enabled: Boolean(String(data.get('llmApiKey') || '').trim() || settings.llm?.apiKey),
@@ -541,13 +550,21 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             careerStage: data.get('careerStage'),
-            targetTracks: targetTracks.length ? targetTracks : ['ai_solutions', 'ai_product', 'ai_customer_success'],
+            targetTracks: targetTracks.length ? targetTracks : ['product'],
             experienceYears: Number(data.get('experienceYears') || 0),
             salaryFloorK: Number(data.get('salaryFloorK') || 0),
             salaryExpectK: Number(data.get('salaryExpectK') || 0),
             locationScore,
           }),
         });
+        const resumeContent = String(data.get('resume') || '').trim();
+        if (resumeContent) {
+          await api('/api/resume', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ content: resumeContent }),
+          });
+        }
+        state.settings = { ...settings, keywords: keywords.length ? keywords : DEFAULT_KEYWORDS };
         closeSetup();
         showStatus('设置已保存');
       } catch (error) {
@@ -562,11 +579,20 @@
 
   async function startCrawl(source) {
     const label = sourceLabels[source] || source;
+    if (!state.settings) {
+      const config = await api('/api/config');
+      state.settings = config.settings;
+    }
     const preset = getSelectedKeywordPreset();
     try {
+      const auth = await api(`/api/login/status?source=${encodeURIComponent(source)}`);
+      if (!auth.loggedIn) {
+        showStatus(`${label} 尚未登录，请先点击“打开 ${label} 登录”，完成登录后再抓取`);
+        return;
+      }
       const run = await api('/api/crawl', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sources: [source], keywords: preset.keywords || DEFAULT_KEYWORDS, pages: 1 }),
+        body: JSON.stringify({ sources: [source], keywords: preset.keywords.length ? preset.keywords : DEFAULT_KEYWORDS, pages: 1 }),
       });
       showStatus(`${label} · ${preset.label}：${run.message}`, true);
       pollStatus({ restore: false });

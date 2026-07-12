@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import type { RawJob } from '../types.js';
 import { AuthRequiredError, BaseCrawler, PageStructureError, RateLimitError } from './base.js';
 import { CdpChromeSession, type BrowserFetchResult } from './cdp-chrome.js';
+import { cityCodeFor } from '../cities.js';
 
 export interface JobSummary {
   title: string;
@@ -10,6 +11,9 @@ export interface JobSummary {
   location: string;
   url: string;
   tags: string[];
+  recruiter_name?: string;
+  recruiter_title?: string;
+  is_headhunter?: boolean;
 }
 
 export async function extractBossCards(page: Page): Promise<JobSummary[]> {
@@ -125,10 +129,10 @@ export class BossCrawler extends BaseCrawler {
     return response.data.zpData;
   }
 
-  protected async searchPage(keyword: string, pageNumber: number): Promise<RawJob[]> {
+  protected async searchPage(keyword: string, pageNumber: number, city: string): Promise<RawJob[]> {
     const officialPage = new URL('/web/geek/job', 'https://www.zhipin.com');
     officialPage.searchParams.set('query', keyword);
-    officialPage.searchParams.set('city', this.config.cityCode);
+    officialPage.searchParams.set('city', cityCodeFor(this.source, city));
     officialPage.searchParams.set('page', String(pageNumber));
     const listResponse = await this.session.navigateAndCaptureJson<BossApiEnvelope<{ jobList?: BossListItem[]; lid?: string }>>(
       officialPage.toString(),

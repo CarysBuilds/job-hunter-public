@@ -4,6 +4,7 @@ import { EXPIRED_JOB_SIGNAL_SOURCE, hasExpiredJobSignal, isExpiredJobError } fro
 import { AuthRequiredError, BaseCrawler, PageStructureError, RateLimitError } from './base.js';
 import { CdpChromeSession, PLATFORM_CDP_OPTIONS } from './cdp-chrome.js';
 import type { JobSummary } from './boss.js';
+import { cityCodeFor } from '../cities.js';
 
 const OPTIONS = PLATFORM_CDP_OPTIONS.zhaopin;
 const MIN_ACTION_DELAY_MS = 12_000;
@@ -261,8 +262,8 @@ export class ZhaopinCrawler extends BaseCrawler {
     await this.session.ensureOpen();
   }
 
-  protected async searchPage(keyword: string, pageNumber: number): Promise<RawJob[]> {
-    const pageUrl = this.searchUrl(keyword, pageNumber);
+  protected async searchPage(keyword: string, pageNumber: number, city: string): Promise<RawJob[]> {
+    const pageUrl = this.searchUrl(keyword, pageNumber, city);
     let summaries: ZhaopinJobSummary[];
     try {
       summaries = await this.session.navigateAndEvaluate<ZhaopinJobSummary[]>(pageUrl, LIST_EXPRESSION, 20_000);
@@ -304,10 +305,10 @@ export class ZhaopinCrawler extends BaseCrawler {
     await this.sleep(delay);
   }
 
-  private searchUrl(keyword: string, pageNumber: number): string {
+  private searchUrl(keyword: string, pageNumber: number, city: string): string {
     const url = new URL('https://sou.zhaopin.com/');
     url.searchParams.set('kw', keyword);
-    url.searchParams.set('jl', '765');
+    url.searchParams.set('jl', cityCodeFor(this.source, city));
     url.searchParams.set('p', String(pageNumber));
     return url.toString();
   }

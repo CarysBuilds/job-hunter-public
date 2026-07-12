@@ -92,6 +92,7 @@ describe('前端生命周期烟测', () => {
     await page.waitForTimeout(150);
     assert.equal(await page.evaluate(() => (window as unknown as { x: number }).x), 0);
     assert.equal(await page.locator('input[name="keywords"]').inputValue(), payload);
+    assert.equal(await page.locator('input[name="crawlCities"]').inputValue(), '北京');
     assert.equal(await page.locator('input[name="cities"]').inputValue(), payload);
     await page.close();
   });
@@ -99,7 +100,7 @@ describe('前端生命周期烟测', () => {
   it('首页可渲染、可切换历史岗位，并在详情显示发现时间', async () => {
     const page = await browser.newPage();
     await page.goto(origin, { waitUntil: 'networkidle' });
-    assert.equal(await page.title(), 'Job Hunter — AI 岗位评估');
+    assert.equal(await page.title(), 'Job Hunter — 岗位匹配评估');
     assert.equal(await page.locator('[data-login-source="boss"]').innerText(), '打开 BOSS 登录');
     assert.equal(await page.locator('[data-crawl-source]').count(), 3);
     assert.equal(await page.locator('#btn-setup').innerText(), '设置');
@@ -111,6 +112,11 @@ describe('前端生命周期烟测', () => {
     assert.match(await page.locator('#job-tbody').innerText(), /当前 Agent 岗位/);
 
     let crawlBody: { keywords?: string[] } | undefined;
+    await page.route(/\/api\/login\/status(?:\?|$)/, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { source: 'boss', loggedIn: true } }),
+    }));
     await page.route('**/api/crawl', async (route) => {
       crawlBody = JSON.parse(route.request().postData() || '{}') as { keywords?: string[] };
       await route.fulfill({
@@ -140,12 +146,13 @@ describe('前端生命周期烟测', () => {
         }),
       });
     });
-    await page.locator('#crawl-keyword-preset button[data-value="product"]').click();
+    const crawlRequest = page.waitForRequest((request) => request.url().includes('/api/crawl'));
+    await page.locator('#crawl-keyword-preset button[data-value="custom"]').click();
     await page.locator('[data-crawl-source="boss"]').click();
-    assert.deepEqual(crawlBody?.keywords, [
-      '产品经理', '产品运营', '客户成功经理', '实施顾问', '业务流程顾问', 'SaaS解决方案顾问',
-    ]);
+    const capturedCrawl = await crawlRequest;
+    assert.deepEqual((capturedCrawl.postDataJSON() as { keywords?: string[] }).keywords, ['\"><svg onload=x=1>']);
     await page.unroute('**/api/crawl');
+    await page.unroute(/\/api\/login\/status(?:\?|$)/);
     await page.waitForFunction(() => !(document.querySelector('[data-crawl-source="boss"]') as HTMLButtonElement | null)?.disabled);
 
     await Promise.all([

@@ -115,6 +115,22 @@ describe('猎聘页面解析 fixture', () => {
     await page.close();
   });
 
+  it('识别猎聘猎头发布岗位以触发统一降档', async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div class="liepin-job-card">
+        <a href="/job/hunter.shtml"><span class="job-title">产品经理</span></a>
+        <span class="salary">20-35k</span>
+        <span class="company-name">某科技公司</span>
+        <span class="recruiter-title">高级猎头顾问</span>
+      </div>
+    `);
+    const cards = await extractLiepinCards(page);
+    assert.equal(cards[0].is_headhunter, true);
+    assert.match(cards[0].recruiter_title ?? '', /猎头/);
+    await page.close();
+  });
+
   it('解析猎聘详情 JD', async () => {
     const page = await browser.newPage();
     await page.setContent('<section class="job-description">负责企业 AI 解决方案咨询和客户成功。</section>');
