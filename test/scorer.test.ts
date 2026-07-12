@@ -97,7 +97,7 @@ describe('个性化评分 v5', () => {
       jd_fulltext: `负责企业客户大模型产品上线运营、培训、客户成功、续费留存和需求反馈，围绕 RAG 知识库、Agent 工作流梳理客户场景，推动跨部门交付和复盘，不承担销售业绩指标。`,
     }));
     assert.equal(score.track, 'ai_customer_success');
-    assert.equal(score.grade, 'A');
+    assert.equal(score.grade, 'B');
     assert.ok(score.matched_skills.includes('交付培训与客户成功'));
     assert.equal(score.red_flags.some((flag) => flag.includes('销售指标')), false);
   });
@@ -275,10 +275,10 @@ describe('个性化评分 v5', () => {
       reputation_summary: '外企双休成熟公司',
     }));
     assert.equal(score.total >= 65, true);
-    assert.equal(score.track, 'other');
-    assert.equal(score.grade, 'C');
-    assert.ok(score.summary.includes('JD 缺少明确 AI 证据'));
-    assert.ok(score.evidence.some((item) => item.text.includes('最高按 C 级处理')));
+    assert.equal(score.track, 'consulting');
+    assert.equal(score.grade, 'B');
+    assert.equal(score.summary.includes('JD 缺少明确 AI 证据'), false);
+    assert.equal(score.evidence.some((item) => item.text.includes('最高按 C 级处理')), false);
   });
 
   it('不会把 JD 未提到的个人技能列为缺失', () => {

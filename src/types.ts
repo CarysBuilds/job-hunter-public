@@ -13,6 +13,13 @@ export type JobTrack =
   | 'ai_customer_success'
   | 'algorithm_research'
   | 'pure_sales'
+  | 'product'
+  | 'engineering'
+  | 'operations'
+  | 'design'
+  | 'data'
+  | 'consulting'
+  | 'customer_service'
   | 'other';
 
 export interface RawJob {
@@ -132,6 +139,7 @@ export interface CandidateProfile {
 export interface UserSettings {
   setupCompleted: boolean;
   cityCode: string;
+  cities: string[];
   keywords: string[];
   platforms: Record<JobSource, boolean>;
   llm: {
@@ -176,6 +184,7 @@ export interface CrawlConfig {
   cdpPort: number;
   cdpPorts: Record<JobSource, number>;
   cityCode: string;
+  cities: string[];
 }
 
 export type RunOperation = 'crawl' | 'rescore';

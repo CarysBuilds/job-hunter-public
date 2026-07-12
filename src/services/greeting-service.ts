@@ -15,14 +15,14 @@ export interface GreetingGenerator {
 
 export class ResumeMissingError extends Error {
   constructor() {
-    super('尚未配置简历，请先将简历文本保存到 data/profile/resume.md');
+    super('尚未上传有效简历，请先在“设置”中上传简历内容');
     this.name = 'ResumeMissingError';
   }
 }
 
 export class LlmUnavailableError extends Error {
   constructor() {
-    super('LLM API 尚未启用或密钥未配置');
+    super('模型 API Key 尚未配置，请先在“设置”中填写 API Key');
     this.name = 'LlmUnavailableError';
   }
 }

@@ -103,6 +103,13 @@ function classifyTrack(job: RawJob, semantic?: SemanticAnalysis | null): JobTrac
   if (customerSuccess && hasAi) return 'ai_customer_success';
   if (solution && hasAi) return 'ai_solutions';
   if (application) return 'ai_application';
+  if (product) return 'product';
+  if (hasAny(title, ['运营', '内容', '增长', '用户运营', '活动策划'])) return 'operations';
+  if (hasAny(title, ['设计师', '视觉设计', '交互设计', 'ui', 'ux'])) return 'design';
+  if (hasAny(title, ['数据分析', '数据科学', '商业分析', 'bi'])) return 'data';
+  if (hasAny(title, ENGINEERING_TITLE_KEYWORDS)) return 'engineering';
+  if (solution) return 'consulting';
+  if (customerSuccess || hasAny(title, ['客服', '客户服务', '售后'])) return 'customer_service';
   return 'other';
 }
 
@@ -127,6 +134,14 @@ function scoreRole(job: RawJob, track: JobTrack, profile: CandidateProfile): { s
       return { score: 4, evidence: ['岗位偏算法研究或模型训练，并非目标主线'] };
     case 'pure_sales':
       return { score: 4, evidence: ['岗位以销售或商务拓展为主'] };
+    case 'product':
+    case 'engineering':
+    case 'operations':
+    case 'design':
+    case 'data':
+    case 'consulting':
+    case 'customer_service':
+      return { score: 12, evidence: ['岗位方向未被选为当前目标方向'] };
     default:
       return {
         score: hasAny(text, ['rag', 'llm', '大模型', 'agent', '智能体']) ? 14 : 8,
@@ -205,6 +220,13 @@ function scoreCapabilities(job: RawJob, profile: CandidateProfile, track: JobTra
     ai_application: profile.targetTracks.includes('ai_application') ? 25 : hasPriorityWork(text) ? 18 : 12,
     algorithm_research: 10,
     pure_sales: 8,
+    product: 25,
+    engineering: 25,
+    operations: 25,
+    design: 25,
+    data: 25,
+    consulting: 25,
+    customer_service: 25,
     other: 14,
   };
   const codeCap = codingBurden.level === 'heavy' ? Math.min(trackCap[track], 12) : codingBurden.level === 'moderate' ? Math.min(trackCap[track], 18) : trackCap[track];
@@ -441,7 +463,8 @@ export function scoreWithRules(
   const total = clamp(Math.round(jobMatchScore * 0.7 + companyQualityScore * 0.3), 0, 100);
   const lowSalary = Boolean(condition.salary && condition.salary.maxK < profile.salaryFloorK);
   const headhunter = isHeadhunterJob(job);
-  const lacksJdAiEvidence = !hasExplicitAiEvidence(normalize(job.jd_fulltext));
+  const aiTracks: JobTrack[] = ['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research'];
+  const lacksJdAiEvidence = aiTracks.includes(track) && !hasExplicitAiEvidence(normalize(job.jd_fulltext));
   const earlyCareer = profile.careerStage === 'internship' || profile.careerStage === 'new_grad';
   const grade = gradeFor(total, lowSalary, threshold.nonFullTime && !earlyCareer, headhunter, risk.codingBurden, risk.modelBurden, risk.hasSalesQuota, lacksJdAiEvidence);
   const insufficient = [...threshold.insufficient, ...condition.insufficient];
@@ -473,6 +496,13 @@ export function scoreWithRules(
     ai_customer_success: 'AI 客户成功',
     algorithm_research: '算法研究',
     pure_sales: '销售/商务',
+    product: '产品',
+    engineering: '技术/研发',
+    operations: '运营/增长',
+    design: '设计/创意',
+    data: '数据/分析',
+    consulting: '咨询/解决方案/实施',
+    customer_service: '客户成功/服务',
     other: '其他方向',
   };
   const aiEvidenceSuffix = lacksJdAiEvidence ? '；JD 缺少明确 AI 证据，最高 C' : '';

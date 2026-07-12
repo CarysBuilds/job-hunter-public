@@ -23,6 +23,7 @@ export class PageStructureError extends Error {
 
 export interface CrawlProgress {
   keyword: string;
+  city: string;
   page: number;
   completedPages: number;
   totalPages: number;
@@ -34,7 +35,7 @@ export abstract class BaseCrawler {
   constructor(protected readonly config: CrawlConfig) {}
 
   protected abstract ensureReady(): Promise<void>;
-  protected abstract searchPage(keyword: string, page: number): Promise<RawJob[]>;
+  protected abstract searchPage(keyword: string, page: number, city: string): Promise<RawJob[]>;
   abstract loginInteractive(timeoutMs?: number): Promise<boolean>;
 
   async crawl(
@@ -43,24 +44,26 @@ export abstract class BaseCrawler {
   ): Promise<RawJob[]> {
     await this.ensureReady();
     const results: RawJob[] = [];
-    const totalPages = keywords.length * this.config.pages;
+    const totalPages = keywords.length * this.config.cities.length * this.config.pages;
     let completedPages = 0;
     for (const keyword of keywords) {
-      for (let page = 1; page <= this.config.pages; page++) {
-        const jobs = await this.searchPageWithRetry(keyword, page);
-        results.push(...jobs);
-        completedPages++;
-        await onProgress?.({ keyword, page, completedPages, totalPages, found: results.length });
-        if (completedPages < totalPages) await this.randomDelay();
+      for (const city of this.config.cities) {
+        for (let page = 1; page <= this.config.pages; page++) {
+          const jobs = await this.searchPageWithRetry(keyword, page, city);
+          results.push(...jobs);
+          completedPages++;
+          await onProgress?.({ keyword, city, page, completedPages, totalPages, found: results.length });
+          if (completedPages < totalPages) await this.randomDelay();
+        }
       }
     }
     return results;
   }
 
-  private async searchPageWithRetry(keyword: string, page: number): Promise<RawJob[]> {
+  private async searchPageWithRetry(keyword: string, page: number, city: string): Promise<RawJob[]> {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        return await this.searchPage(keyword, page);
+        return await this.searchPage(keyword, page, city);
       } catch (error) {
         if (!(error instanceof RateLimitError) || attempt === 3) throw error;
         const backoff = 5_000 * 2 ** (attempt - 1);

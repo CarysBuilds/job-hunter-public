@@ -199,7 +199,7 @@ export class RunService {
           currentPage: progress.completedPages,
           totalPages: progress.totalPages,
           found,
-          message: `正在抓取 ${sourceLabel}「${progress.keyword}」第 ${progress.page} 页`,
+          message: `正在抓取 ${sourceLabel} · ${progress.city}「${progress.keyword}」第 ${progress.page} 页`,
         });
       });
       this.store.updateRun(run.id, { found: raw.length, message: `正在整理 ${new Set(raw.map((job) => normalizeCompanyKey(job.company))).size} 家公司画像` });

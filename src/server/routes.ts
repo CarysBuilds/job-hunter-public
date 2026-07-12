@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import {
@@ -10,6 +12,7 @@ import {
   saveCandidateProfile,
   saveUserSettings,
   setupStatus,
+  appConfig,
 } from '../config.js';
 import { CdpChromeSession, PLATFORM_CDP_OPTIONS } from '../crawlers/cdp-chrome.js';
 import { RunConflictError, type RunService } from '../services/run-service.js';
@@ -55,10 +58,12 @@ const ContactPatchSchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 const LoginSourceSchema = z.object({ source: JobSourceSchema.default('boss') });
+const ResumeSchema = z.object({ content: z.string().trim().min(80, '简历内容至少需要 80 个字符').max(100_000) });
 
 const UserSettingsPatchSchema = z.object({
   setupCompleted: z.boolean().optional(),
   cityCode: z.string().regex(/^\d{9}$/).optional(),
+  cities: z.array(z.string().trim().min(1).max(20)).min(1).max(5).optional(),
   keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20).optional(),
   platforms: z.object({
     boss: z.boolean().optional(),
@@ -76,7 +81,7 @@ const UserSettingsPatchSchema = z.object({
 
 const ProfilePatchSchema = z.object({
   careerStage: z.enum(['internship', 'new_grad', 'experienced', 'career_change']).optional(),
-  targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'other']))
+  targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'product', 'engineering', 'operations', 'design', 'data', 'consulting', 'customer_service', 'other']))
     .min(1).max(5).optional(),
   technicalGroups: z.array(z.object({
     label: z.string().min(1).max(40),
@@ -230,6 +235,38 @@ export function createRouter(
 
   router.get('/profile/status', (_req: Request, res: Response) => {
     res.json({ ok: true, data: greeting.status() });
+  });
+
+  router.get('/resume', (_req: Request, res: Response) => {
+    const content = existsSync(appConfig.candidateResumePath)
+      ? readFileSync(appConfig.candidateResumePath, 'utf8')
+      : '';
+    res.json({ ok: true, data: { content } });
+  });
+
+  router.put('/resume', (req: Request, res: Response) => {
+    const parsed = ResumeSchema.safeParse(req.body);
+    if (!parsed.success) return sendValidationError(res, parsed.error);
+    mkdirSync(dirname(appConfig.candidateResumePath), { recursive: true });
+    writeFileSync(appConfig.candidateResumePath, `${parsed.data.content}\n`, 'utf8');
+    res.json({ ok: true, data: { saved: true, path: 'data/profile/resume.md' } });
+  });
+
+  router.get('/login/status', async (req: Request, res: Response) => {
+    const parsed = LoginSourceSchema.safeParse({ source: req.query.source });
+    if (!parsed.success) return sendValidationError(res, parsed.error);
+    const source = parsed.data.source;
+    try {
+      const session = new CdpChromeSession(getCrawlConfig({ pages: 1 }), PLATFORM_CDP_OPTIONS[source]);
+      const loggedIn = source === 'boss'
+        ? await session.isLoggedIn().catch(() => false)
+        : await session.currentUrl().then((url) => Boolean(url
+          && PLATFORM_CDP_OPTIONS[source].targetUrlPattern.test(url)
+          && !PLATFORM_CDP_OPTIONS[source].authUrlPattern.test(url))).catch(() => false);
+      res.json({ ok: true, data: { source, loggedIn } });
+    } catch {
+      res.json({ ok: true, data: { source, loggedIn: false } });
+    }
   });
 
   router.post('/login', async (req: Request, res: Response) => {

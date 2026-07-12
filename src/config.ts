@@ -5,6 +5,7 @@ import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { CandidateProfile, CrawlConfig, JobSource, UserSettings } from './types.js';
+import { CITY_CODES, cityNameFromBossCode, normalizeCityName } from './cities.js';
 
 export const PROJECT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const envPath = resolve(PROJECT_ROOT, '.env');
@@ -74,17 +75,12 @@ export const PROFILE_PATH = resolve(DATA_DIR, 'profile', 'profile.json');
 export const RESUME_PATH = resolve(DATA_DIR, 'profile', 'resume.md');
 
 export const DEFAULT_KEYWORDS = [
-  'AI产品经理',
-  'AI解决方案顾问',
-  '大模型解决方案',
-  'AI客户成功',
-  'AI实施顾问',
-  '数字化解决方案顾问',
+  '产品经理',
 ];
 
 export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
   careerStage: 'experienced',
-  targetTracks: ['ai_solutions', 'ai_product', 'ai_customer_success'],
+  targetTracks: ['product'],
   technicalGroups: [
     { label: '大模型应用理解', keywords: ['Agent', '智能体', 'RAG', '知识库', 'LLM', '大模型应用', 'AIGC', 'Prompt'], points: 5 },
     { label: 'AI工具与工作流', keywords: ['Dify', 'Coze', '扣子', '工作流', '低代码', '无代码', '自动化'], points: 4 },
@@ -113,6 +109,7 @@ export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   setupCompleted: false,
   cityCode: parsed.CRAWL_CITY_CODE,
+  cities: [cityNameFromBossCode(parsed.CRAWL_CITY_CODE) ?? '北京'],
   keywords: [...DEFAULT_KEYWORDS],
   platforms: { boss: true, liepin: false, zhaopin: false },
   llm: {
@@ -132,6 +129,7 @@ const JobSourceSchema = z.enum(['boss', 'liepin', 'zhaopin']);
 const SettingsSchema = z.object({
   setupCompleted: z.boolean().default(false),
   cityCode: z.string().regex(/^\d{9}$/).default(DEFAULT_USER_SETTINGS.cityCode),
+  cities: z.array(z.string().trim().min(1).max(20)).min(1).max(5).default(DEFAULT_USER_SETTINGS.cities),
   keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20).default(DEFAULT_USER_SETTINGS.keywords),
   platforms: z.object({
     boss: z.boolean().default(DEFAULT_USER_SETTINGS.platforms.boss),
@@ -153,7 +151,7 @@ const SettingsSchema = z.object({
 
 const ProfileSchema = z.object({
   careerStage: z.enum(['internship', 'new_grad', 'experienced', 'career_change']).default(DEFAULT_CANDIDATE_PROFILE.careerStage),
-  targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'other']))
+  targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'product', 'engineering', 'operations', 'design', 'data', 'consulting', 'customer_service', 'other']))
     .min(1).max(5).default(DEFAULT_CANDIDATE_PROFILE.targetTracks),
   technicalGroups: z.array(z.object({
     label: z.string().min(1).max(40),
@@ -184,14 +182,25 @@ function writeJson(path: string, value: unknown): void {
 }
 
 export function loadUserSettings(): UserSettings {
-  const parsedSettings = SettingsSchema.safeParse(readJson(SETTINGS_PATH) ?? {});
-  return parsedSettings.success ? parsedSettings.data : DEFAULT_USER_SETTINGS;
+  const raw = readJson(SETTINGS_PATH) ?? {};
+  const parsedSettings = SettingsSchema.safeParse(raw);
+  if (!parsedSettings.success) return DEFAULT_USER_SETTINGS;
+  if (!Array.isArray((raw as { cities?: unknown }).cities)) {
+    parsedSettings.data.cities = [cityNameFromBossCode(parsedSettings.data.cityCode) ?? '北京'];
+  }
+  return parsedSettings.data;
 }
 
 export function saveUserSettings(input: unknown): UserSettings {
+  const current = loadUserSettings();
+  const changes = typeof input === 'object' && input ? input as Partial<UserSettings> : {};
+  const requestedCities = changes.cities?.map(normalizeCityName).filter(Boolean);
+  const cities = requestedCities?.length ? [...new Set(requestedCities)] : current.cities;
   const settings = SettingsSchema.parse({
-    ...loadUserSettings(),
-    ...(typeof input === 'object' && input ? input : {}),
+    ...current,
+    ...changes,
+    cities,
+    cityCode: CITY_CODES[cities[0]]?.boss ?? changes.cityCode ?? current.cityCode,
     publicMode: DEFAULT_USER_SETTINGS.publicMode,
   });
   writeJson(SETTINGS_PATH, settings);
@@ -292,6 +301,7 @@ export function getCrawlConfig(overrides: Partial<CrawlConfig> = {}): CrawlConfi
     cdpPort: ports.boss,
     cdpPorts: ports,
     cityCode: settings.cityCode,
+    cities: settings.cities,
     ...overrides,
   };
 }

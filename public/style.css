@@ -694,6 +694,12 @@ tr.expanded .expand-icon {
   border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
+.resume-input {
+  min-height: 180px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
 .company-profile-card,
 .contact-card {
   background: var(--bg-elev2);

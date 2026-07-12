@@ -4,6 +4,7 @@ import { EXPIRED_JOB_SIGNAL_SOURCE, hasExpiredJobSignal, isExpiredJobError } fro
 import { AuthRequiredError, BaseCrawler, PageStructureError, RateLimitError } from './base.js';
 import { CdpChromeSession, PLATFORM_CDP_OPTIONS } from './cdp-chrome.js';
 import type { JobSummary } from './boss.js';
+import { cityCodeFor } from '../cities.js';
 
 const OPTIONS = PLATFORM_CDP_OPTIONS.liepin;
 const MIN_ACTION_DELAY_MS = 12_000;
@@ -119,6 +120,8 @@ export async function extractLiepinCards(page: Page): Promise<JobSummary[]> {
         ...requirementTags(linkLines),
         ...companyLines.slice(1),
       ]),
+      recruiter_title: /猎头|寻访顾问|招聘顾问|人才顾问|headhunter/i.test(cardText ?? '') ? '猎头/招聘顾问' : undefined,
+      is_headhunter: /猎头|寻访顾问|招聘顾问|人才顾问|headhunter/i.test(cardText ?? ''),
     });
   }
   return summaries;
@@ -171,6 +174,8 @@ const LIST_EXPRESSION = `(() => {
       location: jobLocation,
       url: href,
       cardText,
+      recruiter_title: /猎头|寻访顾问|招聘顾问|人才顾问|headhunter/i.test(cardText) ? '猎头/招聘顾问' : undefined,
+      is_headhunter: /猎头|寻访顾问|招聘顾问|人才顾问|headhunter/i.test(cardText),
       tags: unique([
         ...[...card.querySelectorAll(tagSelector)].map((node) => node.innerText || node.textContent || ''),
         ...requirementTags(linkLines),
@@ -211,8 +216,8 @@ export class LiepinCrawler extends BaseCrawler {
     await this.session.ensureOpen();
   }
 
-  protected async searchPage(keyword: string, pageNumber: number): Promise<RawJob[]> {
-    const pageUrl = this.searchUrl(keyword, pageNumber);
+  protected async searchPage(keyword: string, pageNumber: number, city: string): Promise<RawJob[]> {
+    const pageUrl = this.searchUrl(keyword, pageNumber, city);
     let summaries: JobSummary[];
     try {
       summaries = await this.session.navigateAndEvaluate<JobSummary[]>(pageUrl, LIST_EXPRESSION, 20_000);
@@ -253,10 +258,10 @@ export class LiepinCrawler extends BaseCrawler {
     await this.sleep(delay);
   }
 
-  private searchUrl(keyword: string, pageNumber: number): string {
+  private searchUrl(keyword: string, pageNumber: number, city: string): string {
     const url = new URL('/zhaopin/', OPTIONS.homeUrl);
     url.searchParams.set('key', keyword);
-    url.searchParams.set('dqs', '050090');
+    url.searchParams.set('dqs', cityCodeFor(this.source, city));
     url.searchParams.set('currentPage', String(Math.max(0, pageNumber - 1)));
     return url.toString();
   }
