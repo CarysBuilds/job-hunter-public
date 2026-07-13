@@ -1,6 +1,6 @@
 {
   "name": "job-hunter",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Windows-first local job discovery and matching assistant",
   "license": "MIT",
