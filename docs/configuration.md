@@ -21,4 +21,4 @@ Runtime files:
 
 - `settings.json`: platform, city, keywords, LLM settings.
 - `profile/profile.json`: candidate profile and scoring preferences.
-- `profile/resume.md`: resume text used only for greeting draft generation.
+- `profile/resume.md`: resume text used for local/API-assisted job capability matching and greeting draft generation.

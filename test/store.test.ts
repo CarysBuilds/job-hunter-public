@@ -440,7 +440,7 @@ describe('SQLite JobStore', () => {
     reopened.close();
   });
 
-  it('迁移旧 JSON 时按 v5 规则重新评分', () => {
+  it('迁移旧 JSON 时按 v6 规则重新评分', () => {
     const dir = mkdtempSync(join(tmpdir(), 'job-hunter-'));
     dirs.push(dir);
     const legacyPath = join(dir, 'jobs.json');
@@ -452,12 +452,12 @@ describe('SQLite JobStore', () => {
     const store = new JobStore(join(dir, 'test.sqlite'));
     assert.equal(store.migrateLegacyJson(legacyPath), 1);
     const migrated = store.listJobs()[0];
-    assert.equal(migrated.score.score_version, 5);
+    assert.equal(migrated.score.score_version, 6);
     assert.notEqual(migrated.score.total, 1);
     store.close();
   });
 
-  it('启动时把旧 SQLite 评分回填为 v5', async () => {
+  it('启动时把旧 SQLite 评分回填为 v6', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'job-hunter-'));
     dirs.push(dir);
     const path = join(dir, 'test.sqlite');
@@ -473,7 +473,7 @@ describe('SQLite JobStore', () => {
 
     const reopened = new JobStore(path);
     const migrated = reopened.getJob(scored.id);
-    assert.equal(migrated?.score.score_version, 5);
+    assert.equal(migrated?.score.score_version, 6);
     assert.notEqual(migrated?.score.total, 1);
     assert.equal(typeof migrated?.score.job_match_score, 'number');
     reopened.close();

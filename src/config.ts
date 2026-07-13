@@ -81,24 +81,6 @@ export const DEFAULT_KEYWORDS = [
 export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
   careerStage: 'experienced',
   targetTracks: ['product'],
-  technicalGroups: [
-    { label: '大模型应用理解', keywords: ['Agent', '智能体', 'RAG', '知识库', 'LLM', '大模型应用', 'AIGC', 'Prompt'], points: 5 },
-    { label: 'AI工具与工作流', keywords: ['Dify', 'Coze', '扣子', '工作流', '低代码', '无代码', '自动化'], points: 4 },
-    { label: '业务流程与数据分析', keywords: ['流程数字化', 'CRM', '数据看板', '业务分析', '客户台账', '运营分析'], points: 4 },
-    { label: '产品落地', keywords: ['AI产品', '产品需求', '产品规划', '产品设计', 'PRD', '原型', '用户体验', '产品落地'], points: 4 },
-    { label: '轻量系统集成', keywords: ['API', '接口', '系统集成', 'SaaS', '企业微信', '飞书', '钉钉'], points: 2 },
-  ],
-  solutionGroups: [
-    { label: '需求调研与分析', keywords: ['需求分析', '需求调研', '客户需求', '用户访谈', '痛点分析'], points: 3 },
-    { label: '解决方案设计', keywords: ['解决方案', '方案设计', '技术方案', '咨询方案', '方案架构'], points: 4 },
-    { label: 'PoC与演示', keywords: ['PoC', 'POC', '原型', 'Demo', '演示', '投标', '标书'], points: 4 },
-    { label: '客户沟通与售前', keywords: ['客户沟通', '售前', '技术顾问', '客户汇报', '跨部门'], points: 4 },
-    { label: '交付培训与客户成功', keywords: ['项目交付', '实施', '技术文档', '培训', '客户成功', '上线', '复盘'], points: 3 },
-  ],
-  mismatchSkills: [
-    'PyTorch', 'TensorFlow', 'CUDA', 'C++', '模型训练', '分布式训练', '模型微调',
-    'SFT', 'LoRA', '强化学习', '推理部署', '推理优化', '论文复现', '算法研究',
-  ],
   education: '未配置',
   experienceYears: 3,
   salaryFloorK: 0,
@@ -153,17 +135,6 @@ const ProfileSchema = z.object({
   careerStage: z.enum(['internship', 'new_grad', 'experienced', 'career_change']).default(DEFAULT_CANDIDATE_PROFILE.careerStage),
   targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'product', 'engineering', 'operations', 'design', 'data', 'consulting', 'customer_service', 'other']))
     .min(1).max(5).default(DEFAULT_CANDIDATE_PROFILE.targetTracks),
-  technicalGroups: z.array(z.object({
-    label: z.string().min(1).max(40),
-    keywords: z.array(z.string().min(1).max(40)).max(40),
-    points: z.number().min(0).max(10),
-  })).max(20).default(DEFAULT_CANDIDATE_PROFILE.technicalGroups),
-  solutionGroups: z.array(z.object({
-    label: z.string().min(1).max(40),
-    keywords: z.array(z.string().min(1).max(40)).max(40),
-    points: z.number().min(0).max(10),
-  })).max(20).default(DEFAULT_CANDIDATE_PROFILE.solutionGroups),
-  mismatchSkills: z.array(z.string().min(1).max(40)).max(80).default(DEFAULT_CANDIDATE_PROFILE.mismatchSkills),
   education: z.string().max(120).default(DEFAULT_CANDIDATE_PROFILE.education),
   experienceYears: z.number().int().min(0).max(50).default(DEFAULT_CANDIDATE_PROFILE.experienceYears),
   salaryFloorK: z.number().min(0).max(300).default(DEFAULT_CANDIDATE_PROFILE.salaryFloorK),
@@ -228,7 +199,8 @@ export function setupStatus() {
     configured: settings.setupCompleted && profileConfigured,
     settingsConfigured: settings.setupCompleted,
     profileConfigured,
-    resumeConfigured: existsSync(getCandidateResumePath()),
+    resumeConfigured: existsSync(getCandidateResumePath())
+      && readFileSync(getCandidateResumePath(), 'utf8').trim().length >= 80,
     dataDir: DATA_DIR,
   };
 }

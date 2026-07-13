@@ -12,6 +12,8 @@ const TEST_PROFILE: CandidateProfile = {
   locationScore: { 深圳: 5, 广州: 2, 珠海: 2 },
 };
 
+const TEST_RESUME = `本科，8 年工作经验。负责企业软件产品、AI 产品和大模型解决方案，完成需求分析、客户访谈、产品规划、PRD、原型设计、用户体验、PoC 演示、客户沟通、项目交付、培训、上线运营和复盘。熟悉 Agent、RAG、知识库、工作流、Dify、Python、TypeScript、Node.js、API 与数据分析。`;
+
 function job(overrides: Partial<RawJob> = {}): RawJob {
   return {
     title: 'AI Agent应用开发工程师',
@@ -47,21 +49,21 @@ function company(overrides: Partial<CompanyProfile> = {}): CompanyProfile {
 }
 
 function scoreFor(raw: RawJob, companyProfile: CompanyProfile | null = null) {
-  return scoreWithRules(raw, null, TEST_PROFILE, companyProfile);
+  return scoreWithRules(raw, null, TEST_PROFILE, companyProfile, TEST_RESUME);
 }
 
-describe('个性化评分 v5', () => {
-  it('重编码 AI Agent 工程岗位不再被评为优先投递', () => {
+describe('个性化评分 v6', () => {
+  it('编码岗位不再因固定候选人画像自动降档', () => {
     const score = scoreFor(job());
     assert.equal(score.track, 'ai_solutions');
-    assert.equal(score.grade, 'C');
+    assert.equal(score.grade, 'B');
     assert.ok(score.total < 80);
-    assert.equal(score.score_version, 5);
+    assert.equal(score.score_version, 6);
     assert.equal(score.company_quality_score, 70);
     assert.equal(score.scoring_mode, 'rules');
-    assert.ok(score.required_gaps.includes('Python 编码'));
-    assert.ok(score.required_gaps.includes('TypeScript/JavaScript 工程开发'));
-    assert.ok(score.red_flags.some((flag) => flag.includes('编码或工程开发')));
+    assert.ok(score.matched_skills.includes('AI 应用'));
+    assert.ok(score.matched_skills.includes('编程语言'));
+    assert.equal(score.red_flags.some((flag) => flag.includes('编码或工程开发')), false);
   });
 
   it('认可真实技术售前、PoC 与交付岗位', () => {
@@ -72,8 +74,9 @@ describe('个性化评分 v5', () => {
       jd_fulltext: `面向企业客户开展大模型需求调研、业务分析和解决方案设计，围绕 RAG、Agent 与 API 快速搭建 PoC 和 Demo，参与售前演示、投标、客户沟通、项目实施交付与培训，不承担销售业绩指标。负责产品落地，沉淀技术文档。`,
     }));
     assert.equal(score.track, 'ai_solutions');
-    assert.equal(score.grade, 'A');
-    assert.ok(score.matched_skills.includes('客户沟通与售前'));
+    assert.equal(score.grade, 'B');
+    assert.ok(score.matched_skills.includes('咨询与解决方案'));
+    assert.ok(score.matched_skills.includes('AI 应用'));
     assert.equal(score.red_flags.some((flag) => flag.includes('销售指标')), false);
     assert.deepEqual(score.required_gaps, []);
   });
@@ -86,7 +89,8 @@ describe('个性化评分 v5', () => {
     }));
     assert.equal(score.track, 'ai_product');
     assert.equal(score.grade, 'A');
-    assert.ok(score.matched_skills.includes('产品落地'));
+    assert.ok(score.matched_skills.includes('产品能力'));
+    assert.ok(score.matched_skills.includes('AI 应用'));
     assert.deepEqual(score.required_gaps, []);
   });
 
@@ -98,18 +102,18 @@ describe('个性化评分 v5', () => {
     }));
     assert.equal(score.track, 'ai_customer_success');
     assert.equal(score.grade, 'B');
-    assert.ok(score.matched_skills.includes('交付培训与客户成功'));
+    assert.ok(score.matched_skills.includes('AI 应用'));
     assert.equal(score.red_flags.some((flag) => flag.includes('销售指标')), false);
   });
 
-  it('纯销售和获客职责自然落入 D', () => {
+  it('销售岗位不再因销售指标本身被自动扣分', () => {
     const score = scoreFor(job({
       title: 'AI产品销售经理',
       jd_fulltext: '负责完成季度销售KPI、拓展客户、获客并维护自带客户资源，销售公司的人工智能产品。',
     }));
     assert.equal(score.track, 'pure_sales');
-    assert.equal(score.grade, 'D');
-    assert.equal(score.dimensions.risk_penalty, -10);
+    assert.equal(score.grade, 'C');
+    assert.equal(score.dimensions.risk_penalty, 0);
   });
 
   it('方案型销售、签单回款和业绩目标最高为 C', () => {
@@ -128,18 +132,17 @@ describe('个性化评分 v5', () => {
     }));
     assert.equal(score.track, 'algorithm_research');
     assert.ok(['C', 'D'].includes(score.grade));
-    assert.ok(score.required_gaps.includes('PyTorch'));
-    assert.ok(score.required_gaps.includes('CUDA'));
+    assert.deepEqual(score.required_gaps, []);
   });
 
-  it('AI训练、微调和推理部署岗位不会被方案词误评为优先', () => {
+  it('模型训练岗位不再因固定候选人画像被自动降档', () => {
     const score = scoreFor(job({
       title: '大模型应用 / AI训练工程师（LLM）',
       jd_fulltext: '负责 RAG 知识库、模型微调、SFT、LoRA、强化学习、推理部署、推理优化和向量数据库，输出技术方案和 Demo。',
     }));
-    assert.equal(score.grade, 'C');
-    assert.ok(score.required_gaps.includes('模型微调'));
-    assert.ok(score.red_flags.some((flag) => flag.includes('模型训练')));
+    assert.equal(score.grade, 'B');
+    assert.deepEqual(score.required_gaps, []);
+    assert.equal(score.red_flags.some((flag) => flag.includes('模型训练')), false);
   });
 
   it('4–5 年要求在 8 年 B 端经验画像内不扣分', () => {
@@ -220,13 +223,52 @@ describe('个性化评分 v5', () => {
     assert.equal(score.dimensions.condition_fit, 5);
   });
 
-  it('未知薪资按中性分并标记信息不足', () => {
+  it('未知薪资不推断匹配分并标记信息不足', () => {
     const score = scoreFor(job({ salary: '面议' }));
     assert.ok(score.insufficient_evidence.includes('薪资未明确'));
-    assert.equal(score.dimensions.condition_fit, 10);
+    assert.equal(score.dimensions.condition_fit, 5);
   });
 
-  it('风险岗位只扣分，不做额外等级封顶', () => {
+  it('未上传简历时能力不加分并提示上传后重新匹配', () => {
+    const score = scoreWithRules(job(), null, TEST_PROFILE, null, null);
+    assert.equal(score.dimensions.capability_fit, 0);
+    assert.deepEqual(score.matched_skills, []);
+    assert.deepEqual(score.required_gaps, []);
+    assert.ok(score.insufficient_evidence.includes('需上传简历后进行能力匹配'));
+    assert.match(score.summary, /未上传简历，能力未评分/);
+  });
+
+  it('本地能力词典归纳能力类别，同时不把仅 JD 出现的具体技术当作已掌握', () => {
+    const resume = '本科。拥有 Java、Spring Boot 和 MySQL 项目经验，负责订单系统开发与性能优化。'.repeat(3);
+    const score = scoreWithRules(job({
+      title: 'Java开发工程师',
+      tags: ['Java', 'Spring Boot', 'Redis'],
+      jd_fulltext: '负责 Java、Spring Boot、Redis 服务开发和性能优化。',
+    }), null, { ...TEST_PROFILE, targetTracks: ['engineering'] }, null, resume);
+    assert.ok(score.dimensions.capability_fit > 0);
+    assert.ok(score.matched_skills.includes('软件研发'));
+    assert.ok(score.matched_skills.includes('编程语言'));
+    assert.ok(score.matched_skills.includes('后端与基础设施'));
+    assert.equal(score.matched_skills.some((skill) => /redis/i.test(skill)), false);
+    assert.ok(score.evidence.some((item) => item.category === 'capability' && /简历命中.*Spring Boot.*JD 命中.*Spring Boot/.test(item.text)));
+    assert.deepEqual(score.required_gaps, []);
+  });
+
+  it('本地词典把需求管理和需求分析归纳为产品能力，并保留双方证据', () => {
+    const resume = '本科。负责用户访谈、需求管理和产品迭代，推动业务团队与研发协作。'.repeat(3);
+    const score = scoreWithRules(job({
+      title: '产品经理',
+      tags: ['需求分析', 'PRD'],
+      jd_fulltext: '负责需求分析、PRD 撰写和产品规划，协同研发推动产品落地。',
+    }), null, { ...TEST_PROFILE, targetTracks: ['product'] }, null, resume);
+    assert.ok(score.dimensions.capability_fit > 0);
+    assert.ok(score.matched_skills.includes('产品能力'));
+    assert.ok(score.evidence.some((item) => item.category === 'capability'
+      && /产品能力：简历命中.*需求管理.*JD 命中.*需求分析/.test(item.text)));
+    assert.deepEqual(score.required_gaps, []);
+  });
+
+  it('未配置作息偏好时大小周只提示不扣分', () => {
     const cleanJob = job({
       title: '大模型AI解决方案顾问',
       tags: ['售前', 'PoC', '大模型'],
@@ -234,12 +276,13 @@ describe('个性化评分 v5', () => {
     });
     const clean = scoreFor(cleanJob);
     const risky = scoreFor(job({ ...cleanJob, jd_fulltext: `${cleanJob.jd_fulltext} 工作时间为大小周。` }));
-    assert.equal(risky.job_match_score, clean.job_match_score - 8);
-    assert.ok(risky.total < clean.total);
-    assert.equal(risky.dimensions.risk_penalty, -8);
+    assert.equal(risky.job_match_score, clean.job_match_score);
+    assert.equal(risky.total, clean.total);
+    assert.equal(risky.dimensions.risk_penalty, 0);
+    assert.ok(risky.red_flags.some((flag) => flag.includes('仅提示')));
   });
 
-  it('公司画像进入综合分并保留公司风险证据', () => {
+  it('未配置公司偏好时公司画像保持中性分并保留事实信号', () => {
     const good = scoreFor(job(), company({
       quality_score: 90,
       company_type: 'foreign',
@@ -254,14 +297,14 @@ describe('个性化评分 v5', () => {
       red_flags: ['外包、派遣或驻场', '大小周'],
       reputation_summary: '外包且大小周',
     }));
-    assert.equal(good.company_quality_score, 90);
-    assert.equal(bad.company_quality_score, 35);
-    assert.ok(good.total > bad.total);
+    assert.equal(good.company_quality_score, 70);
+    assert.equal(bad.company_quality_score, 70);
+    assert.equal(good.total, bad.total);
     assert.ok(bad.red_flags.includes('大小周'));
     assert.ok(bad.evidence.some((item) => item.category === 'company' && item.text.includes('外包且大小周')));
   });
 
-  it('补充经历岗位 JD 完全不含 AI 时最高为 C', () => {
+  it('非 AI 咨询岗位不因固化 AI 偏好被降档', () => {
     const score = scoreFor(job({
       title: 'CRM解决方案顾问',
       tags: ['CRM', '解决方案', '数字化'],

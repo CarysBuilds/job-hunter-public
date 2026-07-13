@@ -93,6 +93,7 @@ describe('前端生命周期烟测', () => {
     assert.equal(await page.evaluate(() => (window as unknown as { x: number }).x), 0);
     assert.equal(await page.locator('input[name="keywords"]').inputValue(), payload);
     assert.equal(await page.locator('input[name="crawlCities"]').inputValue(), '北京');
+    assert.match(await page.locator('.local-data-path').innerText(), /本地数据目录：/);
     assert.equal(await page.locator('input[name="cities"]').inputValue(), payload);
     await page.close();
   });
@@ -168,6 +169,7 @@ describe('前端生命周期烟测', () => {
     assert.match(detail, /最近发现/);
     assert.match(detail, /BOSS/);
     assert.match(detail, /生成打招呼草稿/);
+    assert.match(detail, /需上传简历后进行能力匹配/);
     await page.close();
   });
 });

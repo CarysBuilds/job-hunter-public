@@ -86,60 +86,46 @@ export function buildBossCompanyProfile(company: string, jobs: RawJob[], now = n
   ].filter(Boolean).join(' ')).join(' ').normalize('NFKC').toLowerCase();
   const greenFlags = new Set<string>();
   const redFlags = new Set<string>();
-  let score = 70;
+  const score = 70;
 
   const companyType = inferCompanyType(text);
   const workLife = inferWorkLife(text);
   const scale = scaleScore(text);
-  score += scale.delta;
   if (scale.flag && scale.delta > 0) greenFlags.add(scale.flag);
   if (scale.flag && scale.delta < 0) redFlags.add(scale.flag);
 
   if (companyType === 'foreign') {
-    score += 8;
     greenFlags.add(`${platformLabel}信息显示外企/外资信号`);
   } else if (companyType === 'listed') {
-    score += 7;
     greenFlags.add(`${platformLabel}信息显示上市或成熟公司信号`);
   } else if (companyType === 'mature') {
-    score += 5;
     greenFlags.add(`${platformLabel}信息显示成熟公司信号`);
   } else if (companyType === 'startup') {
-    score -= 2;
     redFlags.add(`${platformLabel}信息显示融资阶段较早或不确定`);
   } else if (companyType === 'outsourcing') {
-    score -= 22;
     redFlags.add(`${platformLabel}信息显示外包、派遣或驻场风险`);
   }
 
   if (workLife === 'weekends') {
-    score += 8;
     greenFlags.add(`${platformLabel}信息出现双休信号`);
   } else if (workLife === 'big_small_week') {
-    score -= 18;
     redFlags.add(`${platformLabel}信息出现大小周信号`);
   } else if (workLife === 'single_day_off') {
-    score -= 28;
     redFlags.add(`${platformLabel}信息出现单休信号`);
   } else if (workLife === 'overtime_risk') {
-    score -= 6;
     redFlags.add(`${platformLabel}福利或 JD 出现加班补助/夜班/高强度信号`);
   }
 
   if (includesAny(text, ['五险一金'])) {
-    score += 3;
     greenFlags.add(`${platformLabel}福利包含五险一金`);
   }
   if (includesAny(text, ['带薪年假'])) {
-    score += 2;
     greenFlags.add(`${platformLabel}福利包含带薪年假`);
   }
   if (includesAny(text, ['补充医疗保险', '定期体检', '免费班车', '餐补', '住房补贴'])) {
-    score += 2;
     greenFlags.add(`${platformLabel}福利完整度较好`);
   }
   if (includesAny(text, ['销售kpi', '销售指标', '业绩指标', '底薪加提成'])) {
-    score -= 5;
     redFlags.add(`${platformLabel}信息出现销售或提成压力信号`);
   }
 

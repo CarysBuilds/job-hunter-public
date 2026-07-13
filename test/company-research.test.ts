@@ -84,11 +84,11 @@ describe('BOSS 公司画像与复用', () => {
     assert.equal(store.getCompanyProfile('同一家公司')?.quality_score, 92);
     assert.equal(jobs.length, 2);
     assert.equal(jobs[0].company_profile?.quality_score, 92);
-    assert.equal(jobs[0].score.company_quality_score, 92);
+    assert.equal(jobs[0].score.company_quality_score, 70);
     store.close();
   });
 
-  it('BOSS 规模、阶段和福利字段会提高公司质量分', () => {
+  it('BOSS 规模、阶段和福利作为事实展示但不替用户设置公司偏好', () => {
     const saved = buildBossCompanyProfile('样例科技', [
       raw({
         company: '样例科技',
@@ -102,12 +102,12 @@ describe('BOSS 公司画像与复用', () => {
 
     assert.equal(saved.company_type, 'listed');
     assert.equal(saved.work_life, 'weekends');
-    assert.ok(saved.quality_score >= 90);
+    assert.equal(saved.quality_score, 70);
     assert.match(saved.reputation_summary, /1000-9999人/);
     assert.equal(saved.sources[0].query, 'boss');
   });
 
-  it('BOSS 外包、小团队和大小周信号会降低公司质量分', () => {
+  it('BOSS 外包、小团队和大小周作为事实展示但不自动降公司分', () => {
     const saved = buildBossCompanyProfile('外包科技', [
       raw({
         company: '外包科技',
@@ -120,7 +120,7 @@ describe('BOSS 公司画像与复用', () => {
 
     assert.equal(saved.company_type, 'outsourcing');
     assert.equal(saved.work_life, 'big_small_week');
-    assert.ok(saved.quality_score < 50);
+    assert.equal(saved.quality_score, 70);
     assert.match(saved.reputation_summary, /外包/);
   });
 

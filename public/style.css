@@ -700,6 +700,16 @@ tr.expanded .expand-icon {
   line-height: 1.55;
 }
 
+.local-data-path {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-elev2);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .company-profile-card,
 .contact-card {
   background: var(--bg-elev2);

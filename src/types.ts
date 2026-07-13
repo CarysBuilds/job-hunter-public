@@ -105,7 +105,7 @@ export interface JobScore {
   green_flags: string[];
   evidence: ScoreEvidence[];
   summary: string;
-  score_version: 5;
+  score_version: 6;
   scoring_mode: ScoringMode;
 }
 
@@ -126,9 +126,6 @@ export interface ScoredJob extends RawJob {
 export interface CandidateProfile {
   careerStage: CareerStage;
   targetTracks: JobTrack[];
-  technicalGroups: Array<{ label: string; keywords: string[]; points: number }>;
-  solutionGroups: Array<{ label: string; keywords: string[]; points: number }>;
-  mismatchSkills: string[];
   education: string;
   experienceYears: number;
   salaryFloorK: number;
@@ -171,6 +168,10 @@ export interface SemanticAnalysis {
   is_fake_ai: boolean;
   evidence: string[];
   summary: string;
+  capability_score: number;
+  matched_skills: string[];
+  required_gaps: string[];
+  capability_evidence: string[];
 }
 
 export interface CrawlConfig {

@@ -370,7 +370,10 @@
     panel.append(section(`综合评分 ${job.score.total} · 岗位 ${job.score.job_match_score ?? job.score.total} · 公司 ${job.score.company_quality_score ?? 70}`, breakdown));
     panel.append(companyProfileSection(job));
     panel.append(contactSection(job));
-    panel.append(section('匹配能力', tagList(job.score.matched_skills, 'matched')));
+    const resumeMissingForMatch = job.score.insufficient_evidence.includes('需上传简历后进行能力匹配');
+    panel.append(section('匹配能力', resumeMissingForMatch
+      ? make('p', 'greeting-error', '需上传简历后进行能力匹配；上传后请点击“重新评分”。')
+      : tagList(job.score.matched_skills, 'matched')));
     if (job.score.required_gaps.length) panel.append(section('明确能力差距', tagList(job.score.required_gaps, 'missing')));
     if (job.score.insufficient_evidence.length) panel.append(section('信息不足', tagList(job.score.insufficient_evidence, '')));
     panel.append(section('绿灯信号', flagList(job.score.green_flags, true)));
@@ -448,7 +451,9 @@
   }
 
   async function openSetup() {
-    const [config, profilePayload, resumePayload] = await Promise.all([api('/api/config'), api('/api/profile'), api('/api/resume')]);
+    const [config, profilePayload, resumePayload, setupStatus] = await Promise.all([
+      api('/api/config'), api('/api/profile'), api('/api/resume'), api('/api/setup/status'),
+    ]);
     const settings = config.settings;
     const profile = profilePayload.profile;
     state.settings = settings;
@@ -460,7 +465,11 @@
     close.setAttribute('aria-label', '关闭');
     close.addEventListener('click', closeSetup);
     const header = make('div', 'modal-header');
-    header.append(make('h2', '', '初始设置'), make('p', 'muted', '关键词决定平台实际搜索什么岗位；目标方向只影响抓取结果的匹配评分，两者不重复。所有内容仅保存在本机。'));
+    header.append(
+      make('h2', '', '初始设置'),
+      make('p', 'muted', '关键词决定平台实际搜索什么岗位；目标方向只影响抓取结果的匹配评分，两者不重复。所有内容仅保存在本机。'),
+      make('p', 'local-data-path', `本地数据目录：${setupStatus.dataDir}`),
+    );
     modal.append(close, header);
 
     const form = make('form', 'setup-form');
@@ -493,7 +502,7 @@
       tracks,
       setupInput('模型 API Base', 'llmBaseURL', settings.llm?.baseURL || ''),
       setupInput('模型名称', 'llmModel', settings.llm?.model || ''),
-      setupInput('模型 API Key', 'llmApiKey', '', {
+      setupInput('模型 API Key（用于简历-JD 语义匹配和打招呼草稿）', 'llmApiKey', '', {
         type: 'password',
         placeholder: settings.llm?.apiKey ? '已配置，留空则保持不变' : '',
       }),
@@ -566,7 +575,7 @@
         }
         state.settings = { ...settings, keywords: keywords.length ? keywords : DEFAULT_KEYWORDS };
         closeSetup();
-        showStatus('设置已保存');
+        showStatus(resumeContent ? '设置和简历已保存；请点击“重新评分”更新现有岗位的能力匹配' : '设置已保存');
       } catch (error) {
         showStatus(`设置保存失败：${error.message}`);
       } finally {

@@ -10,6 +10,7 @@ import type {
   SemanticAnalysis,
 } from '../types.js';
 import { getCandidateProfile } from './profile.js';
+import { CAPABILITY_GROUPS } from './capability-dictionary.js';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, ' ');
@@ -20,24 +21,6 @@ const PRODUCT_KEYWORDS = ['产品经理', 'ai产品', '产品负责人', '产品
 const CUSTOMER_SUCCESS_KEYWORDS = ['客户成功', '客户体验', '客户运营', '客户培训', '客户服务', '上线运营', '续费', '留存'];
 const SALES_KEYWORDS = ['销售', '客户经理', '商务拓展', '业务拓展', 'bd'];
 const ENGINEERING_TITLE_KEYWORDS = ['开发', '工程师', '后端', '前端', '全栈', '架构师', '研发'];
-const MODEL_ENGINEERING_KEYWORDS = [
-  'pytorch', 'tensorflow', 'cuda', '模型训练', '模型微调', 'fine-tuning', 'sft', 'lora',
-  '强化学习', 'drl', '深度学习', '机器学习', '模型压缩', '模型量化', '推理部署',
-  '推理优化', '模型并行', '多模态模型', '向量数据库', 'milvus', 'faiss', 'pgvector',
-  'vllm', 'sglang', 'tensorrt', 'triton', 'ray', '私有化部署',
-];
-const CODING_KEYWORDS = [
-  'python', 'java', 'typescript', 'javascript', 'node.js', 'nodejs', 'go', 'golang',
-  'c++', 'c#', 'php', 'rust', 'fastapi', 'flask', 'django', 'nestjs', 'spring',
-  'vue', 'react', 'kubernetes', 'docker', '微服务', '高并发', '后端', '前端', '全栈',
-];
-const CODING_GAP_KEYWORDS: Array<{ label: string; keywords: string[] }> = [
-  { label: 'Python 编码', keywords: ['python', 'fastapi', 'flask', 'django'] },
-  { label: 'Java/Go/C# 后端编码', keywords: ['java', 'golang', 'go', 'c#', 'spring'] },
-  { label: 'TypeScript/JavaScript 工程开发', keywords: ['typescript', 'javascript', 'node.js', 'nodejs', 'nestjs'] },
-  { label: '前端工程开发', keywords: ['vue', 'react', '前端'] },
-  { label: '后端/全栈/微服务工程', keywords: ['后端', '全栈', '微服务', '高并发', 'kubernetes', 'docker'] },
-];
 const EXPLICIT_AI_KEYWORDS = ['ai', '人工智能', '大模型', 'llm', 'aigc', 'agent', '智能体', 'rag', 'prompt', 'dify', 'coze', '扣子'];
 const NON_FULL_TIME_FIELD_PATTERN = /实习|兼职|在校|校招|应届|应届生|应届毕业|毕业生|暑期|寒假|可转正|留用|202[6-9]届|2[6-9]届/i;
 const NON_FULL_TIME_JD_PATTERN = /实习生|实习岗位|实习职位|实习招聘|实习机会|实习期|实习转正|可转正|暑期实习|寒假实习|长期实习|短期实习|全职实习|每周.{0,8}(?:到岗|出勤).{0,8}\d+\s*天|\d+\s*天.{0,8}(?:到岗|出勤)|在校生|在校学生/i;
@@ -113,41 +96,22 @@ function classifyTrack(job: RawJob, semantic?: SemanticAnalysis | null): JobTrac
   return 'other';
 }
 
-function scoreRole(job: RawJob, track: JobTrack, profile: CandidateProfile): { score: number; evidence: string[] } {
-  const text = normalize(`${job.title} ${job.jd_fulltext}`);
-  if (profile.targetTracks.includes(track)) {
+function targetMatchesTrack(targets: JobTrack[], track: JobTrack): boolean {
+  const families: Partial<Record<JobTrack, JobTrack[]>> = {
+    product: ['product', 'ai_product'],
+    engineering: ['engineering', 'ai_application'],
+    data: ['data', 'algorithm_research'],
+    consulting: ['consulting', 'ai_solutions'],
+    customer_service: ['customer_service', 'ai_customer_success'],
+  };
+  return targets.some((target) => target === track || families[target]?.includes(track));
+}
+
+function scoreRole(_job: RawJob, track: JobTrack, profile: CandidateProfile): { score: number; evidence: string[] } {
+  if (targetMatchesTrack(profile.targetTracks, track)) {
     return { score: 30, evidence: ['岗位方向属于当前用户画像的目标方向'] };
   }
-  switch (track) {
-    case 'ai_solutions':
-      return { score: 30, evidence: ['岗位属于 AI 解决方案、售前或交付优先方向'] };
-    case 'ai_product':
-      return { score: 29, evidence: ['岗位属于 AI 产品经理或产品落地优先方向'] };
-    case 'ai_customer_success':
-      return { score: 27, evidence: ['岗位属于 AI 客户成功、培训或上线运营方向'] };
-    case 'ai_application':
-      return {
-        score: hasAny(text, [...SOLUTION_KEYWORDS, ...PRODUCT_KEYWORDS, ...CUSTOMER_SUCCESS_KEYWORDS]) ? 22 : 18,
-        evidence: ['岗位偏 AI 应用工程，非当前第一优先方向'],
-      };
-    case 'algorithm_research':
-      return { score: 4, evidence: ['岗位偏算法研究或模型训练，并非目标主线'] };
-    case 'pure_sales':
-      return { score: 4, evidence: ['岗位以销售或商务拓展为主'] };
-    case 'product':
-    case 'engineering':
-    case 'operations':
-    case 'design':
-    case 'data':
-    case 'consulting':
-    case 'customer_service':
-      return { score: 12, evidence: ['岗位方向未被选为当前目标方向'] };
-    default:
-      return {
-        score: hasAny(text, ['rag', 'llm', '大模型', 'agent', '智能体']) ? 14 : 8,
-        evidence: ['岗位方向与 AI 方案/产品/客户成功主线仅部分重合'],
-      };
-  }
+  return { score: 10, evidence: ['岗位方向未被选为当前目标方向'] };
 }
 
 function hasPriorityWork(text: string): boolean {
@@ -166,82 +130,131 @@ function isNonFullTimeJob(job: RawJob): boolean {
   return NON_FULL_TIME_JD_PATTERN.test(normalize(job.jd_fulltext));
 }
 
-function hasCodingBurden(job: RawJob, text: string, track: JobTrack): { level: 'none' | 'moderate' | 'heavy'; hits: string[] } {
-  const title = normalize(job.title);
-  const hits = CODING_KEYWORDS.filter((keyword) => text.includes(keyword));
-  const engineeringTitle = hasAny(title, ENGINEERING_TITLE_KEYWORDS) && !hasAny(title, [...SOLUTION_KEYWORDS, ...PRODUCT_KEYWORDS, ...CUSTOMER_SUCCESS_KEYWORDS]);
-  const hardRequirement = /(熟练|精通|掌握|扎实|必须|要求|至少|独立|负责).{0,20}(开发|编码|工程化|后端|前端|全栈|微服务|系统架构|代码)/.test(text)
-    || /(开发|编码|工程化|后端|前端|全栈|微服务|系统架构|代码).{0,20}(熟练|精通|掌握|扎实|必须|要求|至少|独立)/.test(text);
-  const frameworkBurden = hits.some((keyword) => ['fastapi', 'flask', 'django', 'nestjs', 'spring', 'vue', 'react', 'kubernetes', 'docker', '微服务', '高并发'].includes(keyword));
+const TERM_STOP_WORDS = new Set([
+  '负责', '工作', '岗位', '职位', '公司', '相关', '能力', '经验', '要求', '熟悉', '掌握', '具备', '优先',
+  '以及', '进行', '完成', '参与', '能够', '良好', '较强', '以上', '以下', '至少', '包括', '不限', '需要',
+  '通过', '根据', '提供', '支持', '推动', '协助', '团队', '业务', '项目', '产品', '客户', '任职', '职责',
+]);
 
-  if (engineeringTitle && (hits.length >= 2 || hardRequirement || frameworkBurden)) return { level: 'heavy', hits };
-  if (track === 'ai_application' && hits.length >= 3) return { level: 'heavy', hits };
-  if (hits.length >= 3 && !hasPriorityWork(text)) return { level: 'heavy', hits };
-  if (hits.length >= 2 || hardRequirement || frameworkBurden) return { level: 'moderate', hits };
-  return { level: 'none', hits };
-}
-
-function hasModelEngineeringBurden(job: RawJob, text: string): { level: 'none' | 'moderate' | 'heavy'; hits: string[] } {
-  const title = normalize(job.title);
-  const hits = MODEL_ENGINEERING_KEYWORDS.filter((keyword) => text.includes(keyword));
-  const titleIsHard = hasAny(title, ['算法', '训练工程师', 'ai训练', '模型训练', '深度学习', '机器学习']);
-  const hardRequirement = /(负责|熟悉|掌握|精通|扎实|要求).{0,24}(模型训练|模型微调|深度学习|机器学习|强化学习|推理部署|推理优化|pytorch|tensorflow|cuda)/.test(text)
-    || /(模型训练|模型微调|深度学习|机器学习|强化学习|推理部署|推理优化|pytorch|tensorflow|cuda).{0,24}(负责|熟悉|掌握|精通|扎实|要求)/.test(text);
-  if (titleIsHard || hits.length >= 3 || hardRequirement) return { level: 'heavy', hits };
-  if (hits.length >= 1) return { level: 'moderate', hits };
-  return { level: 'none', hits };
-}
-
-function detectCodingGaps(job: RawJob, track: JobTrack, codingBurden: { level: 'none' | 'moderate' | 'heavy'; hits: string[] }): string[] {
-  if (codingBurden.level === 'none') return [];
-  const text = normalize(`${job.title} ${job.jd_fulltext} ${(job.tags ?? []).join(' ')}`);
-  const gaps = CODING_GAP_KEYWORDS
-    .filter((group) => group.keywords.some((keyword) => text.includes(keyword)))
-    .map((group) => group.label);
-  if (track === 'ai_application' && gaps.length === 0 && hasAny(text, ['开发', '工程化', '编码'])) gaps.push('工程开发');
-  return [...new Set(gaps)];
-}
-
-function scoreCapabilities(job: RawJob, profile: CandidateProfile, track: JobTrack, codingBurden: { level: 'none' | 'moderate' | 'heavy'; hits: string[] }) {
-  const text = normalize(`${job.title} ${job.jd_fulltext} ${(job.tags ?? []).join(' ')}`);
-  const matched: string[] = [];
-  let score = 0;
-  for (const group of [...profile.technicalGroups, ...profile.solutionGroups]) {
-    if (hasAny(text, group.keywords.map(normalize))) {
-      score += group.points;
-      matched.push(group.label);
+function extractResumeTerms(text: string): string[] {
+  const segments = [...new Intl.Segmenter('zh-CN', { granularity: 'word' }).segment(text.toLowerCase())]
+    .filter((item) => item.isWordLike)
+    .map((item) => item.segment.trim())
+    .filter((item) => item.length >= 2 && !TERM_STOP_WORDS.has(item) && /[a-z\u4e00-\u9fff]/i.test(item));
+  const terms = new Set(segments);
+  for (let index = 1; index < segments.length; index++) {
+    const previous = segments[index - 1];
+    const current = segments[index];
+    if (/^[\u4e00-\u9fff]+$/.test(previous + current) && previous.length + current.length <= 10) {
+      terms.add(previous + current);
     }
   }
-  const targetBonus = profile.targetTracks.includes(track) ? 3 : 0;
-  const trackCap: Record<JobTrack, number> = {
-    ai_solutions: 25,
-    ai_product: 25,
-    ai_customer_success: 23 + targetBonus,
-    ai_application: profile.targetTracks.includes('ai_application') ? 25 : hasPriorityWork(text) ? 18 : 12,
-    algorithm_research: 10,
-    pure_sales: 8,
-    product: 25,
-    engineering: 25,
-    operations: 25,
-    design: 25,
-    data: 25,
-    consulting: 25,
-    customer_service: 25,
-    other: 14,
-  };
-  const codeCap = codingBurden.level === 'heavy' ? Math.min(trackCap[track], 12) : codingBurden.level === 'moderate' ? Math.min(trackCap[track], 18) : trackCap[track];
-  const requiredGaps = [
-    ...profile.mismatchSkills.filter((skill) => text.includes(skill.toLowerCase())),
-    ...detectCodingGaps(job, track, codingBurden),
-  ];
-  return { score: clamp(score, 0, codeCap), matched, requiredGaps: [...new Set(requiredGaps)] };
+  return [...terms];
 }
 
-function scoreThreshold(job: RawJob, profile: CandidateProfile): { score: number; evidence: string[]; insufficient: string[]; nonFullTime: boolean } {
+function normalizeCapabilityText(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function containsCapabilityKeyword(text: string, keyword: string): boolean {
+  const normalizedText = normalizeCapabilityText(text);
+  const normalizedKeyword = normalizeCapabilityText(keyword);
+  if (/^[a-z0-9+#./ -]+$/i.test(normalizedKeyword)) {
+    const pattern = normalizedKeyword
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\s+/g, '\\s*');
+    return new RegExp(`(^|[^a-z0-9])${pattern}([^a-z0-9]|$)`, 'i').test(normalizedText);
+  }
+  return normalizedText.replace(/\s+/g, '').includes(normalizedKeyword.replace(/\s+/g, ''));
+}
+
+function keywordHits(text: string, keywords: readonly string[]): string[] {
+  return keywords.filter((keyword) => containsCapabilityKeyword(text, keyword));
+}
+
+function localResumeCapability(job: RawJob, resume: string) {
+  const jobText = `${job.title}\n${job.jd_fulltext}\n${(job.tags ?? []).join('\n')}`;
+  const groupMatches = CAPABILITY_GROUPS.flatMap((group) => {
+    const resumeHits = keywordHits(resume, group.keywords);
+    const jobHits = keywordHits(jobText, group.keywords);
+    // 同一能力组两侧各有明确关键词即可归为类别匹配，例如
+    // “需求管理”（简历）与“需求分析/PRD”（JD）都属于产品能力。
+    if (!resumeHits.length || !jobHits.length) return [];
+    return [{
+      label: group.label,
+      points: group.points,
+      evidence: `${group.label}：简历命中“${resumeHits.slice(0, 3).join('、')}”；JD 命中“${jobHits.slice(0, 3).join('、')}”`,
+    }];
+  });
+  const resumeTerms = new Set(extractResumeTerms(resume));
+  const candidates = new Set(extractResumeTerms(jobText.toLowerCase()));
+  for (const tag of job.tags ?? []) {
+    const normalizedTag = tag.trim().toLowerCase();
+    if (normalizedTag.length >= 2) candidates.add(normalizedTag);
+  }
+  const directMatches = [...candidates]
+    .filter((term) => resumeTerms.has(term) || resume.toLowerCase().includes(term))
+    .sort((a, b) => b.length - a.length)
+    .filter((term, index, values) => !values.slice(0, index).some((selected) => selected.includes(term)))
+    .filter((term) => !groupMatches.some((group) => group.evidence.toLowerCase().includes(term)))
+    .slice(0, Math.max(0, 8 - groupMatches.length));
+  const matched = [...groupMatches.map((group) => group.label), ...directMatches].slice(0, 8);
+  const score = clamp(
+    groupMatches.reduce((total, group) => total + group.points, 0)
+      + directMatches.reduce((total, term) => total + (term.length >= 4 ? 3 : 2), 0),
+    0,
+    25
+  );
+  return {
+    score,
+    matched,
+    requiredGaps: [] as string[],
+    evidence: matched.length
+      ? [...groupMatches.map((group) => group.evidence), `本地模式共确认 ${matched.length} 项能力；未调用模型时不推断隐含能力差距`]
+      : ['已读取简历，但未找到可直接确认的简历与 JD 能力重合词'],
+    insufficient: [] as string[],
+    mode: 'local' as const,
+  };
+}
+
+function scoreCapabilities(job: RawJob, semantic: SemanticAnalysis | null, resume: string | null) {
+  if (!resume) {
+    return {
+      score: 0,
+      matched: [] as string[],
+      requiredGaps: [] as string[],
+      evidence: ['未上传简历，能力匹配不加分；请上传简历后重新评分'],
+      insufficient: ['需上传简历后进行能力匹配'],
+      mode: 'none' as const,
+    };
+  }
+  if (semantic && (semantic.capability_score > 0 || semantic.matched_skills.length || semantic.capability_evidence.length)) {
+    return {
+      score: clamp(semantic.capability_score, 0, 25),
+      matched: semantic.matched_skills.slice(0, 8),
+      requiredGaps: semantic.required_gaps.slice(0, 8),
+      evidence: semantic.capability_evidence,
+      insufficient: [] as string[],
+      mode: 'llm' as const,
+    };
+  }
+  return localResumeCapability(job, resume);
+}
+
+function educationRank(text: string): number | null {
+  if (/博士|phd/i.test(text)) return 4;
+  if (/硕士|研究生|master/i.test(text)) return 3;
+  if (/本科|学士|bachelor/i.test(text)) return 2;
+  if (/大专|专科|college/i.test(text)) return 1;
+  if (/高中|中专/.test(text)) return 0;
+  return null;
+}
+
+function scoreThreshold(job: RawJob, profile: CandidateProfile, resume: string | null): { score: number; evidence: string[]; insufficient: string[]; nonFullTime: boolean } {
   const evidence: string[] = [];
   const insufficient: string[] = [];
   const experience = parseExperience(job);
-  let experienceScore = 8;
+  let experienceScore = 0;
   const comfortableYears = Math.max(3, profile.experienceYears - 3);
   const nonFullTime = isNonFullTimeJob(job);
   const acceptsEarlyCareer = profile.careerStage === 'internship' || profile.careerStage === 'new_grad';
@@ -253,10 +266,10 @@ function scoreThreshold(job: RawJob, profile: CandidateProfile): { score: number
     evidence.push('岗位符合当前实习/应届求职阶段');
   } else if (!experience) {
     insufficient.push('工作年限未明确');
-    evidence.push('工作年限未知，按中性分计算');
+    evidence.push('岗位工作年限未知，经验匹配不加分');
   } else if (experience[0] <= comfortableYears) {
     experienceScore = 10;
-    evidence.push(`经验门槛在 ${profile.experienceYears} 年 B 端经验舒适范围内`);
+    evidence.push(`经验门槛在用户填写的 ${profile.experienceYears} 年经验范围内`);
   } else if (experience[0] <= profile.experienceYears) {
     experienceScore = 8;
     evidence.push(`经验要求不超过 ${profile.experienceYears} 年，可正常申请`);
@@ -268,13 +281,23 @@ function scoreThreshold(job: RawJob, profile: CandidateProfile): { score: number
     evidence.push('经验或管理年限要求明显过高');
   }
 
-  const text = `${job.education ?? ''} ${job.jd_fulltext}`;
-  let educationScore = 4;
-  if (/博士|phd/i.test(text)) educationScore = 0;
-  else if (/(硕士|研究生).*(必须|以上)|硕士及以上/.test(text)) educationScore = 2;
-  else if (/(计算机|人工智能|数学|统计).*(专业|相关背景).*(必须|要求)/.test(text)) educationScore = 2;
-  else if (/本科|学士|大专/.test(text)) educationScore = 5;
-  else insufficient.push('学历要求未明确');
+  const requirementText = `${job.education ?? ''} ${job.jd_fulltext}`;
+  const candidateText = `${profile.education === '未配置' ? '' : profile.education} ${resume ?? ''}`;
+  const requiredEducation = educationRank(requirementText);
+  const candidateEducation = educationRank(candidateText);
+  let educationScore = 0;
+  if (candidateEducation === null) {
+    insufficient.push('简历中未识别到学历，学历匹配不加分');
+    evidence.push('缺少候选人学历证据，未推断学历匹配');
+  } else if (requiredEducation === null) {
+    insufficient.push('岗位学历要求未明确');
+    evidence.push('岗位学历要求未知，学历匹配不加分');
+  } else if (candidateEducation >= requiredEducation) {
+    educationScore = 5;
+    evidence.push('简历学历满足岗位明确要求');
+  } else {
+    evidence.push('简历学历低于岗位明确要求');
+  }
 
   return { score: experienceScore + educationScore, evidence, insufficient, nonFullTime };
 }
@@ -283,19 +306,23 @@ function scoreConditions(job: RawJob, profile: CandidateProfile) {
   const evidence: string[] = [];
   const insufficient: string[] = [];
   const salary = parseSalary(job.salary);
-  let salaryScore = 5;
+  let salaryScore = 0;
   if (!salary) {
     const nonMonthlySalary = /(?:元\s*\/\s*(?:天|日|时|小时)|日薪|天薪|时薪|周薪)/i.test(job.salary);
     if (nonMonthlySalary) {
       insufficient.push('非月薪制，未纳入正式岗月薪比较');
-      evidence.push('薪资为非月薪制，条件分按中性值计算');
+      evidence.push('薪资为非月薪制，未推断月薪匹配');
     } else {
       insufficient.push('薪资未明确');
-      evidence.push('薪资未知，按中性分计算');
+      evidence.push('薪资未知，薪资匹配不加分');
     }
   } else {
     const midpoint = (salary.minK + salary.maxK) / 2;
-    if (profile.salaryExpectK <= 0 && profile.salaryFloorK <= 0) salaryScore = 8;
+    if (profile.salaryExpectK <= 0 && profile.salaryFloorK <= 0) {
+      salaryScore = 0;
+      insufficient.push('未填写期望薪资，薪资匹配不加分');
+      evidence.push('缺少薪资偏好，未推断薪资匹配');
+    }
     else if (midpoint >= profile.salaryExpectK) salaryScore = 10;
     else if (midpoint >= profile.salaryFloorK) salaryScore = 7;
     else if (salary.maxK >= profile.salaryFloorK) salaryScore = 5;
@@ -325,27 +352,20 @@ function scoreQuality(job: RawJob) {
   const text = normalize(`${job.title} ${job.jd_fulltext}`);
   const concreteAi = ['agent', '智能体', 'rag', '知识库', 'llm', '大模型', 'prompt', 'dify', 'coze', '扣子', '工作流']
     .filter((keyword) => text.includes(keyword)).length;
-  const aiReality = concreteAi >= 3 ? 4 : concreteAi >= 1 ? 2 : 0;
   const length = job.jd_fulltext.trim().length;
-  const clarity = length >= 500 ? 4 : length >= 250 ? 3 : length >= 100 ? 2 : 1;
-  const deliverySignals = ['需求分析', '需求调研', '解决方案', 'poc', 'demo', '演示', '交付', '实施', '培训', '客户成功']
+  const clarity = length >= 500 ? 5 : length >= 250 ? 4 : length >= 100 ? 2 : 1;
+  const responsibilitySignals = ['负责', '职责', '目标', '交付', '产出', '协作', '推进', '完成', '优化', '设计', '分析']
     .filter((keyword) => text.includes(keyword)).length;
-  const delivery = clamp(deliverySignals, 0, 3);
-  const productSignals = ['产品需求', '产品规划', 'prd', '原型', '用户体验', '产品落地', '业务流程']
-    .filter((keyword) => text.includes(keyword)).length;
-  const product = clamp(productSignals, 0, 3);
-  const ownershipSignals = ['从0到1', '0-1', '产品落地', '独立负责', '项目负责人', '项目管理', '上线']
-    .filter((keyword) => text.includes(keyword)).length;
-  const ownership = clamp(ownershipSignals, 0, 3);
-  const finance = hasAny(text, ['金融', '交易', '证券', '基金', '投研', 'fintech']) ? 2 : 0;
+  const specificity = clamp(responsibilitySignals, 0, 4);
+  const completeness = [job.salary, job.location, job.experience, job.education]
+    .filter((value) => Boolean(value?.trim())).length;
+  const structured = (job.tags?.length ?? 0) >= 3 || /\d+\s*[-–]\s*\d+\s*年|本科|硕士|博士|大专/.test(text) ? 2 : 0;
   const evidence = [
-    aiReality >= 4 ? '包含具体 AI 技术与落地内容' : aiReality > 0 ? '包含部分真实 AI 内容' : 'AI 技术内容不足',
     clarity >= 3 ? 'JD 职责描述较清晰' : 'JD 信息较少',
+    completeness >= 3 ? '薪资、地点、经验或学历信息较完整' : '岗位基础信息不够完整',
   ];
-  if (delivery) evidence.push('包含方案、演示、交付或客户成功工作');
-  if (product) evidence.push('包含产品需求、原型或业务流程工作');
-  if (finance) evidence.push('金融/交易场景带来背景协同');
-  return { score: clamp(aiReality + clarity + delivery + product + ownership + finance, 0, 15), evidence, concreteAi };
+  if (specificity >= 3) evidence.push('职责和预期产出较具体');
+  return { score: clamp(clarity + specificity + completeness + structured, 0, 15), evidence, concreteAi };
 }
 
 function scoreRisks(
@@ -353,8 +373,7 @@ function scoreRisks(
   track: JobTrack,
   semantic: SemanticAnalysis | null | undefined,
   concreteAi: number,
-  codingBurden: { level: 'none' | 'moderate' | 'heavy'; hits: string[] },
-  modelBurden: { level: 'none' | 'moderate' | 'heavy'; hits: string[] }
+  salesIsTarget: boolean
 ) {
   const text = normalize(`${job.title} ${job.jd_fulltext}`);
   const redFlags = new Set<string>();
@@ -362,40 +381,25 @@ function scoreRisks(
   let penalty = 0;
 
   if (/996|大小周|长期加班|经常加班|承受.*压力|强抗压/.test(text) || semantic?.overtime_hint) {
-    penalty -= 8;
-    redFlags.add('存在明确加班或强压暗示');
+    redFlags.add('存在明确加班或强压信号（仅提示，未配置作息偏好时不扣分）');
   }
   if (/外包|劳务派遣|驻场开发|长期驻场/.test(text)) {
-    penalty -= 6;
-    redFlags.add('外包、派遣或长期驻场');
+    redFlags.add('外包、派遣或长期驻场信号（仅提示，未配置公司偏好时不扣分）');
   }
   const negatedQuota = /(?:不承担|无需|没有|无)(?:任何)?(?:销售)?(?:业绩)?(?:指标|kpi)/.test(text);
   const quotaText = text.replace(/(?:不承担|无需|没有|无)(?:任何)?(?:销售)?(?:业绩)?(?:指标|kpi)/g, '');
   const hasSalesQuota = /销售指标|业绩指标|销售kpi|获客|自带客户|客户资源|业绩目标|签单|回款|成交|销售额|提成|商务谈判|客户开拓|市场拓展|商机转化/.test(quotaText)
     || Boolean(semantic?.has_sales_quota && !negatedQuota);
-  if (hasSalesQuota) {
+  const hasSalesQuotaMismatch = hasSalesQuota && track !== 'pure_sales' && !salesIsTarget;
+  if (hasSalesQuotaMismatch) {
     penalty -= 10;
-    redFlags.add('包含销售指标、获客或客户资源要求');
+    redFlags.add('岗位包含销售指标，但未归类为销售目标方向');
   }
   const domains = ['前端', '后端', '运维', '测试', '产品', '运营', '设计', '销售'];
   const domainHits = domains.filter((domain) => text.includes(domain));
   if (domainHits.length >= 5 || semantic?.is_kitchen_sink) {
     penalty -= 6;
     redFlags.add('职责跨度过大，疑似全能杂役岗');
-  }
-  if (codingBurden.level === 'heavy') {
-    penalty -= 10;
-    redFlags.add('要求较强编码或工程开发，不符合当前优先画像');
-  } else if (codingBurden.level === 'moderate') {
-    penalty -= 4;
-    redFlags.add('包含一定编码或工程实现要求，需要谨慎核对');
-  }
-  if (modelBurden.level === 'heavy') {
-    penalty -= 12;
-    redFlags.add('偏模型训练、微调、推理部署或算法工程，不符合当前优先画像');
-  } else if (modelBurden.level === 'moderate') {
-    penalty -= 5;
-    redFlags.add('包含模型训练、微调或推理部署信号，需要谨慎核对');
   }
   const claimsAi = hasAny(text, ['ai', '人工智能', '大模型', 'aigc']);
   const hasSolutionWork = hasPriorityWork(text);
@@ -405,17 +409,12 @@ function scoreRisks(
   }
   semantic?.red_flags.forEach((flag) => redFlags.add(flag));
   semantic?.green_flags.forEach((flag) => greenFlags.add(flag));
-  if (concreteAi >= 3) greenFlags.add('JD 包含具体 AI 技术或工具场景');
-  if (hasSolutionWork) greenFlags.add('包含方案、PoC 或交付能力要求');
-  if (hasAny(text, ['金融', '交易', '证券', '基金', '投研'])) greenFlags.add('金融/交易领域背景协同');
 
   return {
     penalty: clamp(penalty, -30, 0),
     redFlags: [...redFlags],
     greenFlags: [...greenFlags],
-    codingBurden: codingBurden.level,
-    modelBurden: modelBurden.level,
-    hasSalesQuota,
+    hasSalesQuota: hasSalesQuotaMismatch,
   };
 }
 
@@ -424,8 +423,6 @@ function gradeFor(
   lowSalary: boolean,
   nonFullTime: boolean,
   headhunter: boolean,
-  codingBurden: 'none' | 'moderate' | 'heavy',
-  modelBurden: 'none' | 'moderate' | 'heavy',
   hasSalesQuota: boolean,
   lacksJdAiEvidence: boolean
 ): Grade {
@@ -434,10 +431,6 @@ function gradeFor(
   if (lacksJdAiEvidence && (grade === 'A' || grade === 'B')) grade = 'C';
   if ((lowSalary || nonFullTime) && (grade === 'A' || grade === 'B')) grade = 'C';
   if (hasSalesQuota && (grade === 'A' || grade === 'B')) grade = 'C';
-  if (modelBurden === 'heavy' && (grade === 'A' || grade === 'B')) grade = 'C';
-  if (modelBurden === 'moderate' && grade === 'A') grade = 'B';
-  if (codingBurden === 'heavy' && (grade === 'A' || grade === 'B')) grade = 'C';
-  if (codingBurden === 'moderate' && grade === 'A') grade = 'B';
   return grade;
 }
 
@@ -445,34 +438,33 @@ export function scoreWithRules(
   job: RawJob,
   semantic: SemanticAnalysis | null = null,
   profile: CandidateProfile = getCandidateProfile(),
-  companyProfile: CompanyProfile | null = null
+  companyProfile: CompanyProfile | null = null,
+  resume: string | null = null
 ): JobScore {
   const track = classifyTrack(job, semantic);
   const role = scoreRole(job, track, profile);
-  const fullText = normalize(`${job.title} ${job.jd_fulltext} ${(job.tags ?? []).join(' ')}`);
-  const codingBurden = hasCodingBurden(job, fullText, track);
-  const modelBurden = hasModelEngineeringBurden(job, fullText);
-  const capability = scoreCapabilities(job, profile, track, codingBurden);
-  const threshold = scoreThreshold(job, profile);
+  const capability = scoreCapabilities(job, semantic, resume);
+  const threshold = scoreThreshold(job, profile, resume);
   const condition = scoreConditions(job, profile);
   const quality = scoreQuality(job);
-  const risk = scoreRisks(job, track, semantic, quality.concreteAi, codingBurden, modelBurden);
+  const risk = scoreRisks(job, track, semantic, quality.concreteAi, targetMatchesTrack(profile.targetTracks, 'pure_sales'));
   const positive = role.score + capability.score + threshold.score + condition.score + quality.score;
   const jobMatchScore = clamp(positive + risk.penalty, 0, 100);
-  const companyQualityScore = companyProfile?.quality_score ?? 70;
+  const companyQualityScore = 70;
   const total = clamp(Math.round(jobMatchScore * 0.7 + companyQualityScore * 0.3), 0, 100);
   const lowSalary = Boolean(condition.salary && condition.salary.maxK < profile.salaryFloorK);
   const headhunter = isHeadhunterJob(job);
   const aiTracks: JobTrack[] = ['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research'];
   const lacksJdAiEvidence = aiTracks.includes(track) && !hasExplicitAiEvidence(normalize(job.jd_fulltext));
   const earlyCareer = profile.careerStage === 'internship' || profile.careerStage === 'new_grad';
-  const grade = gradeFor(total, lowSalary, threshold.nonFullTime && !earlyCareer, headhunter, risk.codingBurden, risk.modelBurden, risk.hasSalesQuota, lacksJdAiEvidence);
-  const insufficient = [...threshold.insufficient, ...condition.insufficient];
+  const grade = gradeFor(total, lowSalary, threshold.nonFullTime && !earlyCareer, headhunter, risk.hasSalesQuota, lacksJdAiEvidence);
+  const insufficient = [...capability.insufficient, ...threshold.insufficient, ...condition.insufficient];
   if (!companyProfile || companyProfile.confidence === 0) insufficient.push('公司公开画像不足，按中性公司分计算');
   const companyGreenFlags = companyProfile?.green_flags ?? [];
   const companyRedFlags = companyProfile?.red_flags ?? [];
   const evidence: ScoreEvidence[] = [
     ...role.evidence.map((text) => ({ category: 'role' as const, text })),
+    ...capability.evidence.map((text) => ({ category: 'capability' as const, text })),
     ...threshold.evidence.map((text) => ({ category: 'threshold' as const, text })),
     ...condition.evidence.map((text) => ({ category: 'condition' as const, text })),
     ...quality.evidence.map((text) => ({ category: 'quality' as const, text })),
@@ -482,7 +474,7 @@ export function scoreWithRules(
     }] : []),
     ...(companyProfile ? [{
       category: 'company' as const,
-      text: `公司质量分 ${companyQualityScore}：${companyProfile.reputation_summary}`,
+      text: `公司信号暂按中性分 ${companyQualityScore} 计算：${companyProfile.reputation_summary}`,
     }] : []),
     ...companyRedFlags.map((text) => ({ category: 'company' as const, text })),
     ...risk.redFlags.map((text) => ({ category: 'risk' as const, text })),
@@ -506,7 +498,10 @@ export function scoreWithRules(
     other: '其他方向',
   };
   const aiEvidenceSuffix = lacksJdAiEvidence ? '；JD 缺少明确 AI 证据，最高 C' : '';
-  const baseSummary = semantic?.summary || `${trackLabel[track]}方向；岗位分 ${jobMatchScore}；公司分 ${companyQualityScore}；匹配 ${capability.matched.length} 个能力组${risk.redFlags.length + companyRedFlags.length ? `；${risk.redFlags.length + companyRedFlags.length} 项风险` : ''}${aiEvidenceSuffix}`;
+  const capabilitySummary = resume
+    ? `匹配 ${capability.matched.length} 项简历能力`
+    : '未上传简历，能力未评分';
+  const baseSummary = `${semantic?.summary || `${trackLabel[track]}方向`}；岗位分 ${jobMatchScore}；公司分 ${companyQualityScore}；${capabilitySummary}${risk.redFlags.length + companyRedFlags.length ? `；${risk.redFlags.length + companyRedFlags.length} 项风险` : ''}${aiEvidenceSuffix}`;
   const summary = headhunter ? `${baseSummary}；猎头发布，归入 C 级` : baseSummary;
   return {
     total,
@@ -530,7 +525,7 @@ export function scoreWithRules(
     green_flags: [...risk.greenFlags, ...companyGreenFlags],
     evidence,
     summary,
-    score_version: 5,
+    score_version: 6,
     scoring_mode: semantic ? 'rules+llm' : 'rules',
   };
 }

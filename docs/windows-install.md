@@ -22,3 +22,5 @@ Chrome is not bundled. Job Hunter looks for Chrome in common Windows locations a
 ## Uninstall
 
 Use Windows Apps settings or the Start Menu uninstall entry. User data may be kept so you can reinstall without losing jobs.
+
+To remove all local data after uninstalling, close Job Hunter and its three Chrome windows, press `Win + R`, enter `%APPDATA%\JobHunter\data`, and delete that folder. Its usual full path is `C:\Users\<your-name>\AppData\Roaming\JobHunter\data`.
