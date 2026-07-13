@@ -6,6 +6,7 @@ import { appConfig } from '../config.js';
 import { canonicalizeJobUrl, createContentFingerprint, createJobId, normalizeFingerprintText } from '../job-id.js';
 import { parseSalary, scoreWithRules } from '../scorer/rules.js';
 import { normalizeCompanyKey } from '../services/company-profile-service.js';
+import { readOptionalResume } from '../services/resume-service.js';
 import type {
   CompanyProfile,
   ContactStatus,
@@ -396,6 +397,7 @@ export class JobStore {
       const parsed = JSON.parse(raw) as Array<Partial<ScoredJob>>;
       if (!Array.isArray(parsed)) return 0;
       const now = new Date().toISOString();
+      const resume = readOptionalResume();
       const valid = parsed.filter((job) => Boolean(job.title && job.company && job.source)).map((legacy) => {
         const rawJob: RawJob = {
           title: legacy.title!,
@@ -419,7 +421,7 @@ export class JobStore {
           ...rawJob,
           id: createJobId(rawJob),
           company_key: normalizeCompanyKey(rawJob.company),
-          score: scoreWithRules(rawJob),
+          score: scoreWithRules(rawJob, null, undefined, null, resume),
           crawled_at: legacy.crawled_at || now,
           updated_at: now,
           first_seen_at: legacy.first_seen_at || legacy.crawled_at || now,
@@ -946,13 +948,14 @@ export class JobStore {
     const rows = this.db.prepare('SELECT * FROM jobs').all() as unknown as JobRow[];
     if (!rows.length) return;
     const update = this.db.prepare('UPDATE jobs SET score_total = ?, score_grade = ?, score_json = ? WHERE id = ?');
+    const resume = readOptionalResume();
     this.db.exec('BEGIN IMMEDIATE');
     try {
       for (const row of rows) {
         const existing = safeJson<{ score_version?: number; job_match_score?: number } | null>(row.score_json, null);
-        if (existing?.score_version === 5 && typeof existing.job_match_score === 'number') continue;
+        if (existing?.score_version === 6 && typeof existing.job_match_score === 'number') continue;
         const job = rowToJob(row);
-        const score = scoreWithRules(job, null, undefined, this.getCompanyProfile(job.company_key));
+        const score = scoreWithRules(job, null, undefined, this.getCompanyProfile(job.company_key), resume);
         update.run(score.total, score.grade, JSON.stringify(score), row.id);
       }
       this.db.exec('COMMIT');

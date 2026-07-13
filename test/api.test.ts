@@ -208,6 +208,18 @@ describe('HTTP API', () => {
     assert.equal(store.getJob(target.id)?.contact?.status, 'drafted');
   });
 
+  it('支持从前端保存和读取用于能力匹配的简历', async () => {
+    const content = '本科，拥有五年产品与数据分析经验，负责需求调研、用户访谈、产品规划、项目交付和复盘。'.repeat(3);
+    const saved = await fetch(`${origin}/api/resume`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    assert.equal(saved.status, 200);
+    const read = await fetch(`${origin}/api/resume`).then((response) => response.json());
+    assert.equal(read.data.content.trim(), content);
+  });
+
   it('支持读取并保存公开版配置和用户画像', async () => {
     const setup = await fetch(`${origin}/api/setup/status`).then((response) => response.json());
     assert.equal(setup.ok, true);

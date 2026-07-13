@@ -83,17 +83,6 @@ const ProfilePatchSchema = z.object({
   careerStage: z.enum(['internship', 'new_grad', 'experienced', 'career_change']).optional(),
   targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'product', 'engineering', 'operations', 'design', 'data', 'consulting', 'customer_service', 'other']))
     .min(1).max(5).optional(),
-  technicalGroups: z.array(z.object({
-    label: z.string().min(1).max(40),
-    keywords: z.array(z.string().min(1).max(40)).max(40),
-    points: z.number().min(0).max(10),
-  })).max(20).optional(),
-  solutionGroups: z.array(z.object({
-    label: z.string().min(1).max(40),
-    keywords: z.array(z.string().min(1).max(40)).max(40),
-    points: z.number().min(0).max(10),
-  })).max(20).optional(),
-  mismatchSkills: z.array(z.string().min(1).max(40)).max(80).optional(),
   education: z.string().max(120).optional(),
   experienceYears: z.number().int().min(0).max(50).optional(),
   salaryFloorK: z.number().min(0).max(300).optional(),

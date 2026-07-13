@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { appConfig } from '../config.js';
 import { getLlmClient, llmStatus } from '../llm/client.js';
 import type { ScoredJob } from '../types.js';
+import { readOptionalResume } from './resume-service.js';
 
 export interface GreetingResult {
   text: string;
@@ -28,10 +28,9 @@ export class LlmUnavailableError extends Error {
 }
 
 function readResume(): string {
-  if (!existsSync(appConfig.candidateResumePath)) throw new ResumeMissingError();
-  const resume = readFileSync(appConfig.candidateResumePath, 'utf8').trim();
-  if (resume.length < 80) throw new ResumeMissingError();
-  return resume.slice(0, 20_000);
+  const resume = readOptionalResume();
+  if (!resume) throw new ResumeMissingError();
+  return resume;
 }
 
 export function buildGreetingPrompt(resume: string, job: ScoredJob): string {
