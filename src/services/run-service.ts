@@ -2,14 +2,17 @@ import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AuthRequiredError, createCrawler, PageStructureError, RateLimitError } from '../crawlers/index.js';
+import { crawlJobKey } from '../crawlers/base.js';
 import { isExpiredJobError } from '../crawlers/availability.js';
 import { appConfig, getCrawlConfig, PROJECT_ROOT } from '../config.js';
 import { createContentFingerprint } from '../job-id.js';
 import { scoreJob, scoreJobs } from '../scorer/index.js';
+import { parseSalary } from '../scorer/rules.js';
 import { getStore, type JobStore } from '../server/store.js';
 import { getCompanyProfileService, neutralCompanyProfile, normalizeCompanyKey, type CompanyProfileService } from './company-profile-service.js';
 import { getDetailRefresher, type DetailRefresher } from './detail-refresh-service.js';
-import type { CompanyProfile, CrawlRun, JobSource, RawJob, ScoredJob } from '../types.js';
+import type { CompanyProfile, CrawlJobObservation, CrawlRun, JobSource, RawJob, RunFailureCategory, ScoredJob } from '../types.js';
+import type { BaseCrawler } from '../crawlers/base.js';
 
 const SOURCE_LABELS: Record<JobSource, string> = { boss: 'BOSS', liepin: '猎聘', zhaopin: '智联' };
 const DEFAULT_AUTO_DETAIL_LIMIT = 30;
@@ -27,6 +30,7 @@ interface RunServiceOptions {
   companyProfile?: CompanyProfileService;
   detailRefresher?: DetailRefresher;
   useLlm?: boolean;
+  crawlerFactory?: (source: JobSource, config: ReturnType<typeof getCrawlConfig>) => BaseCrawler;
 }
 
 function autoDetailLimit(source: JobSource): number {
@@ -93,7 +97,7 @@ export class RunService {
     private readonly options: RunServiceOptions = {}
   ) {}
 
-  startCrawl(input: { source: JobSource; keywords: string[]; pages: number }): CrawlRun {
+  startCrawl(input: { source: JobSource; keywords: string[]; pages: number; minSalary?: number; maxJobs?: number }): CrawlRun {
     this.assertIdle();
     const run = this.store.createRun({ operation: 'crawl', ...input });
     if (this.options.crawlExecution !== 'inline') {
@@ -103,7 +107,7 @@ export class RunService {
     return run;
   }
 
-  async runCrawlNow(input: { source: JobSource; keywords: string[]; pages: number }): Promise<CrawlRun> {
+  async runCrawlNow(input: { source: JobSource; keywords: string[]; pages: number; minSalary?: number; maxJobs?: number }): Promise<CrawlRun> {
     this.assertIdle();
     const run = this.store.createRun({ operation: 'crawl', ...input });
     await this.executeCrawl(run);
@@ -125,6 +129,20 @@ export class RunService {
     const run = this.store.createRun({ operation: 'rescore', keywords: [], pages: 0 });
     this.active = this.executeRescore(run, jobs).finally(() => { this.active = undefined; });
     return run;
+  }
+
+  retryRun(runId: string): CrawlRun {
+    this.assertIdle();
+    const run = this.store.getRun(runId);
+    if (!run || run.operation !== 'crawl' || !run.source) throw new Error('只能重试抓取任务');
+    if (!['failed', 'interrupted', 'partial', 'cancelled'].includes(run.status)) throw new Error('当前任务状态不允许重试');
+    const queued = this.store.updateRun(run.id, {
+      status: 'queued', message: '等待安全重试', error: undefined, failureCategory: undefined,
+      finishedAt: undefined, workerPid: undefined, heartbeatAt: undefined,
+    });
+    if (this.options.crawlExecution !== 'inline') return this.spawnCrawlWorker(queued);
+    this.active = this.executeCrawl(queued).finally(() => { this.active = undefined; });
+    return queued;
   }
 
   private assertIdle(): void {
@@ -190,50 +208,125 @@ export class RunService {
       startedAt,
     });
     const config = getCrawlConfig({ pages: run.pages, keywords: run.keywords });
-    const crawler = createCrawler(run.source!, config);
-    let found = 0;
+    const crawler = this.options.crawlerFactory?.(run.source!, config) ?? createCrawler(run.source!, config);
+    const priorPages = this.store.listRunPages(run.id).filter((page) => page.status === 'committed');
+    const committedOrdinals = new Set(priorPages.map((page) => page.ordinal));
+    const committedJobKeys = new Set(this.store.listRunFingerprints(run.id));
+    let found = Math.max(run.found, committedJobKeys.size);
+    let accepted = committedJobKeys.size;
+    let saved = run.saved;
+    let inserted = run.inserted;
+    let updated = run.updated;
+    let reactivated = run.reactivated;
+    let deduplicated = run.deduplicated;
+    let itemFailures = 0;
+    let detailMissing = priorPages.reduce((sum, page) => sum + page.detailFailed, 0);
     try {
-      const raw = await crawler.crawl(run.keywords, (progress) => {
-        found = progress.found;
-        this.store.updateRun(run.id, {
-          currentPage: progress.completedPages,
-          totalPages: progress.totalPages,
-          found,
-          message: `正在抓取 ${sourceLabel} · ${progress.city}「${progress.keyword}」第 ${progress.page} 页`,
-        });
+      await crawler.crawl(run.keywords, async (progress) => {
+        const observedAt = new Date().toISOString();
+        const observations: CrawlJobObservation[] = [];
+        const eligible: RawJob[] = [];
+        for (const job of progress.duplicateJobs) {
+          observations.push(this.crawlObservation(run, progress.ordinal, job, 'deduplicated', observedAt));
+        }
+        for (const job of progress.jobs) {
+          const key = crawlJobKey(job);
+          let disposition: CrawlJobObservation['disposition'] = 'saved';
+          const salary = parseSalary(job.salary);
+          if (committedJobKeys.has(key)) disposition = 'deduplicated';
+          else if (run.minSalary !== undefined && (!salary || salary.maxK < run.minSalary)) disposition = 'salary_filtered';
+          else if (run.maxJobs !== undefined && accepted + eligible.length >= run.maxJobs) disposition = 'limit_filtered';
+          else eligible.push(job);
+          if (disposition !== 'saved') observations.push(this.crawlObservation(run, progress.ordinal, job, disposition, observedAt));
+        }
+
+        try {
+          this.store.updateRun(run.id, {
+            currentPage: committedOrdinals.size, totalPages: progress.totalPages, found,
+            message: `正在整理 ${sourceLabel} · ${progress.city}「${progress.keyword}」第 ${progress.page} 页`,
+          });
+          const companyProfiles = await this.prepareCompanyProfiles(eligible);
+          let scored = await scoreJobs(eligible, { companyProfiles, useLlm: this.options.useLlm });
+          scored = await this.enrichAutoDetail(run, scored, companyProfiles);
+          const scoredByKey = new Map(scored.map((job) => [crawlJobKey(job), job]));
+          for (const job of eligible) {
+            const scoredJob = scoredByKey.get(crawlJobKey(job));
+            const disposition: CrawlJobObservation['disposition'] = scoredJob ? 'saved' : 'score_failed';
+            if (!scoredJob) itemFailures++;
+            observations.push(this.crawlObservation(run, progress.ordinal, job, disposition, observedAt, scoredJob?.id));
+          }
+          const fingerprints = eligible.filter((job) => scoredByKey.has(crawlJobKey(job))).map(crawlJobKey);
+          const stats = this.store.commitCrawlPage({
+            jobs: scored,
+            page: {
+              runId: run.id, ordinal: progress.ordinal, keyword: progress.keyword, city: progress.city,
+              pageNumber: progress.page, status: 'committed', rawCount: progress.rawCount,
+              uniqueCount: eligible.length, detailFailed: progress.detailFailed,
+              committedAt: new Date().toISOString(),
+            },
+            fingerprints,
+            observations,
+          });
+          for (const fingerprint of fingerprints) committedJobKeys.add(fingerprint);
+          committedOrdinals.add(progress.ordinal);
+          accepted += fingerprints.length;
+          found += progress.rawCount;
+          saved += stats.saved;
+          inserted += stats.inserted;
+          updated += stats.updated;
+          reactivated += stats.reactivated;
+          deduplicated += stats.deduplicated + observations.filter((item) => item.disposition === 'deduplicated').length;
+          detailMissing += progress.detailFailed;
+          this.store.updateRun(run.id, {
+            currentPage: committedOrdinals.size, totalPages: progress.totalPages,
+            found, saved, inserted, updated, reactivated, deduplicated,
+            message: `已提交 ${sourceLabel} · ${progress.city}「${progress.keyword}」第 ${progress.page} 页：保存 ${stats.saved} 条`,
+          });
+        } catch (error) {
+          this.store.recordCrawlPage({
+            page: {
+              runId: run.id, ordinal: progress.ordinal, keyword: progress.keyword, city: progress.city,
+              pageNumber: progress.page, status: 'failed', rawCount: progress.rawCount,
+              uniqueCount: eligible.length, saved: 0, inserted: 0, updated: 0, deduplicated: 0,
+              detailFailed: progress.detailFailed, errorMessage: (error as Error).message,
+            },
+            fingerprints: [], observations,
+          });
+          throw error;
+        }
+      }, {
+        committedOrdinals,
+        seenJobKeys: committedJobKeys,
+        getStoredDetail: (job) => this.store.getJobDetailByUrl(job.url),
+        shouldStop: () => {
+          const current = this.store.getRun(run.id);
+          return current?.status === 'cancelled' || (run.maxJobs !== undefined && accepted >= run.maxJobs);
+        },
       });
-      this.store.updateRun(run.id, { found: raw.length, message: `正在整理 ${new Set(raw.map((job) => normalizeCompanyKey(job.company))).size} 家公司画像` });
-      const companyProfiles = await this.prepareCompanyProfiles(raw);
-      this.store.updateRun(run.id, { found: raw.length, message: `正在评分 ${raw.length} 条岗位` });
-      let scored = await scoreJobs(raw, { companyProfiles, useLlm: this.options.useLlm });
-      scored = await this.enrichAutoDetail(run, scored, companyProfiles);
-      const stats = this.store.upsertJobsDetailed(scored);
+      if (this.store.getRun(run.id)?.status === 'cancelled') return;
       const archived = this.store.archiveStaleJobs();
-      const partial = scored.length !== raw.length;
+      const partial = itemFailures > 0 || detailMissing > 0;
+      const finishedAt = new Date().toISOString();
       this.store.updateRun(run.id, {
-        status: partial ? 'partial' : 'succeeded',
-        found: raw.length,
-        saved: stats.saved,
-        inserted: stats.inserted,
-        updated: stats.updated,
-        reactivated: stats.reactivated,
-        archived,
-        deduplicated: stats.deduplicated,
-        message: `${partial ? '部分完成' : '完成'}：新增 ${stats.inserted}，更新 ${stats.updated}，恢复 ${stats.reactivated}，归档 ${archived}，严格去重 ${stats.deduplicated}`,
-        workerPid: undefined,
-        heartbeatAt: undefined,
-        finishedAt: new Date().toISOString(),
+        status: partial ? 'partial' : 'succeeded', found, saved, inserted, updated, reactivated, archived, deduplicated,
+        failureCategory: partial ? 'item_failure' : undefined,
+        message: `${partial ? '部分完成' : '完成'}：新增 ${inserted}，更新 ${updated}，归档 ${archived}，任务去重 ${deduplicated}`,
+        workerPid: undefined, heartbeatAt: undefined, finishedAt,
+      });
+      this.store.recordSourceHealth({
+        source: run.source!, status: partial ? 'partial' : 'healthy', last_success_at: finishedAt,
+        detail_missing_count: detailMissing, checked_at: finishedAt,
       });
     } catch (error) {
       const failure = this.describeCrawlFailure(error);
+      const finishedAt = new Date().toISOString();
       this.store.updateRun(run.id, {
-        status: 'failed',
-        found,
-        message: failure.message,
-        error: (error as Error).message,
-        workerPid: undefined,
-        heartbeatAt: undefined,
-        finishedAt: new Date().toISOString(),
+        status: 'failed', found, message: failure.message, error: (error as Error).message,
+        failureCategory: failure.category, workerPid: undefined, heartbeatAt: undefined, finishedAt,
+      });
+      this.store.recordSourceHealth({
+        source: run.source!, status: failure.sourceStatus, last_failure_at: finishedAt,
+        last_error: (error as Error).message, detail_missing_count: detailMissing, checked_at: finishedAt,
       });
     } finally {
       clearInterval(heartbeat);
@@ -259,9 +352,12 @@ export class RunService {
       });
       try {
         const existing = this.store.getJob(candidate.id);
+        const reusable = this.store.getJobDetailByUrl(candidate.url);
         const jd = existing && !looksLikeSummaryOnly(existing)
           ? existing.jd_fulltext
-          : await refresher.refresh(candidate);
+          : reusable && reusable.replace(/\s+/g, '').length >= 80
+            ? reusable
+            : await refresher.refresh(candidate);
         if (jd.trim().length <= candidate.jd_fulltext.trim().length) continue;
         const companyProfile = companyProfiles.get(candidate.company_key) ?? null;
         const refreshed = await scoreJob({ ...rawFromScored(candidate), jd_fulltext: jd }, {
@@ -292,20 +388,60 @@ export class RunService {
     return scored.flatMap((job) => byId.has(job.id) ? [byId.get(job.id)!] : []);
   }
 
-  private describeCrawlFailure(error: unknown): { message: string } {
+  private crawlObservation(
+    run: CrawlRun,
+    ordinal: number,
+    job: RawJob,
+    disposition: CrawlJobObservation['disposition'],
+    observedAt: string,
+    jobId?: string,
+  ): CrawlJobObservation {
+    const metadata = job.crawl_observation;
+    return {
+      runId: run.id,
+      ordinal,
+      jobId,
+      source: job.source,
+      platformJobId: metadata?.platformJobId,
+      keyword: metadata?.keyword ?? '',
+      city: metadata?.city ?? '',
+      pageNumber: metadata?.page ?? 0,
+      rank: metadata?.rank ?? 0,
+      title: job.title,
+      company: job.company,
+      url: job.url,
+      disposition,
+      detailStatus: metadata?.detailStatus ?? (job.jd_fulltext.trim().length >= 80 ? 'full' : 'missing'),
+      observedAt,
+    };
+  }
+
+  private describeCrawlFailure(error: unknown): {
+    message: string;
+    category: RunFailureCategory;
+    sourceStatus: 'auth_required' | 'rate_limited' | 'drifted' | 'failed';
+  } {
     if (error instanceof AuthRequiredError) {
       const label = SOURCE_LABELS[error.platform];
-      return { message: `${label} 登录失效，请先打开 ${label} 登录后再抓取` };
+      return {
+        message: `${label} 登录失效，请先打开 ${label} 登录后再抓取`,
+        category: 'auth_required',
+        sourceStatus: 'auth_required',
+      };
     }
     if (error instanceof RateLimitError) {
       const label = SOURCE_LABELS[error.platform];
-      return { message: `${label} 访问过频，请暂停后再试` };
+      return { message: `${label} 访问过频，请暂停后再试`, category: 'rate_limited', sourceStatus: 'rate_limited' };
     }
     if (error instanceof PageStructureError) {
       const label = SOURCE_LABELS[error.platform];
-      return { message: `${label} 页面或风控异常，请回到官网检查账号状态` };
+      return {
+        message: `${label} 页面或风控异常，请回到官网检查账号状态`,
+        category: 'page_structure',
+        sourceStatus: 'drifted',
+      };
     }
-    return { message: '抓取失败' };
+    return { message: '抓取失败', category: 'data_processing', sourceStatus: 'failed' };
   }
 
   private async executeRescore(run: CrawlRun, jobs: ScoredJob[]): Promise<void> {

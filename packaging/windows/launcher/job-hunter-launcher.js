@@ -9,7 +9,7 @@ const dataDir = process.env.APPDATA
   ? resolve(process.env.APPDATA, 'JobHunter', 'data')
   : resolve(installDir, 'data');
 const pidPath = resolve(dataDir, 'job-hunter.pid');
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT || 17321);
 
 function isAlive(pid) {
   if (!pid || Number.isNaN(pid)) return false;

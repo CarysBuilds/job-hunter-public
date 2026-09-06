@@ -1,5 +1,5 @@
 import express from 'express';
-import type { Request, Response, NextFunction } from 'express';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appConfig, getCrawlConfig } from './config.js';
@@ -9,11 +9,10 @@ import { getDetailRefresher, type DetailRefresher } from './services/detail-refr
 import { createRouter } from './server/routes.js';
 import { getStore } from './server/store.js';
 import type { JobSource } from './types.js';
+import { requireLocalAccess, requireMutationMarker, setSecurityHeaders } from './server/security.js';
 
 const SOURCES = ['boss', 'liepin', 'zhaopin'] as const;
 const SOURCE_LABELS: Record<JobSource, string> = { boss: 'BOSS', liepin: '猎聘', zhaopin: '智联' };
-const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 function readArg(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -26,36 +25,21 @@ function readSource(): JobSource {
   return source as JobSource;
 }
 
-function hostNameFromHeader(hostHeader: string | undefined): string {
-  if (!hostHeader) return '';
-  if (hostHeader.startsWith('[')) return hostHeader.slice(0, hostHeader.indexOf(']') + 1);
-  return hostHeader.split(':')[0] ?? '';
-}
-
-function isLocalOrigin(value: string | undefined): boolean {
-  if (!value) return true;
-  try {
-    return LOCAL_HOSTNAMES.has(new URL(value).hostname);
-  } catch {
-    return false;
-  }
-}
-
-function localAccessGuard(req: Request, res: Response, next: NextFunction): void {
-  const hostName = hostNameFromHeader(req.headers.host);
-  if (!LOCAL_HOSTNAMES.has(hostName)) {
-    res.status(403).json({ ok: false, error: '仅允许本机访问' });
-    return;
-  }
-  if (WRITE_METHODS.has(req.method) && !isLocalOrigin(req.headers.origin)) {
-    res.status(403).json({ ok: false, error: '仅允许本机页面发起写操作' });
-    return;
-  }
-  next();
-}
-
 function displayHost(host: string): string {
   return host === '::1' ? '[::1]' : host;
+}
+
+function describePortOwner(port: number): string {
+  try {
+    if (process.platform === 'win32') {
+      return execFileSync('powershell.exe', ['-NoProfile', '-Command',
+        `$c=Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction Stop | Select-Object -First 1; $p=Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; "PID=$($c.OwningProcess) Process=$($p.ProcessName) Address=$($c.LocalAddress):$($c.LocalPort)"`],
+      { encoding: 'utf8' }).trim();
+    }
+    return execFileSync('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'PID、进程名和监听地址暂不可用';
+  }
 }
 
 export function createApp(dependencies: {
@@ -70,7 +54,9 @@ export function createApp(dependencies: {
   const detailRefresher = dependencies.detailRefresher ?? getDetailRefresher();
   const app = express();
   app.disable('x-powered-by');
-  app.use(localAccessGuard);
+  app.use(setSecurityHeaders);
+  app.use(requireLocalAccess);
+  app.use(requireMutationMarker);
   app.use(express.json({ limit: '200kb' }));
   app.use('/api', createRouter(store, runs, greeting, detailRefresher));
   app.use(express.static(appConfig.publicDir, {
@@ -105,6 +91,12 @@ async function main(): Promise<void> {
   const server = app.listen(appConfig.port, appConfig.host, () => {
     const counts = store.lifecycleCounts();
     console.log(`[server] ${new Date().toISOString()} Job Hunter：http://${displayHost(appConfig.host)}:${appConfig.port}；当前 ${counts.active} 条，历史 ${counts.archived} 条`);
+  });
+  server.once('error', (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EADDRINUSE') throw error;
+    const owner = describePortOwner(appConfig.port);
+    console.error(`[server] 端口 ${appConfig.host}:${appConfig.port} 已被占用；不会结束其他进程。\n${owner}`);
+    process.exitCode = 1;
   });
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals) => {

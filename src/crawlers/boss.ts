@@ -92,6 +92,7 @@ function locationOf(city?: string, district?: string): string {
 export class BossCrawler extends BaseCrawler {
   readonly source = 'boss' as const;
   private readonly session = new CdpChromeSession(this.config);
+  private readonly seenPlatformJobIds = new Set<string>();
 
   async loginInteractive(timeoutMs = 180_000): Promise<boolean> {
     await this.session.openLogin();
@@ -145,8 +146,26 @@ export class BossCrawler extends BaseCrawler {
     for (const item of items) {
       if (!item.jobName?.trim() || !item.brandName?.trim()) continue;
       const jobId = item.encryptJobId ?? '';
+      const preliminary: RawJob = {
+        title: item.jobName.trim(), company: item.brandName.trim(), salary: item.salaryDesc || '',
+        location: locationOf(item.cityName, item.areaDistrict), source: this.source,
+        url: jobId ? `https://www.zhipin.com/job_detail/${jobId}.html` : '', jd_fulltext: '',
+        crawl_observation: { platformJobId: jobId || undefined, detailStatus: 'missing' },
+      };
+      if ((jobId && this.seenPlatformJobIds.has(jobId)) || this.isKnownJob(preliminary)) {
+        jobs.push({ ...preliminary, crawl_observation: { ...preliminary.crawl_observation, duplicateHint: true } });
+        continue;
+      }
+      if (jobId) this.seenPlatformJobIds.add(jobId);
       let jd = item.postDescription ?? '';
-      if (jobId) {
+      const jobUrl = jobId ? `https://www.zhipin.com/job_detail/${jobId}.html` : '';
+      const stored = this.reusableStoredDetail({
+        title: item.jobName.trim(), company: item.brandName.trim(), salary: item.salaryDesc || '',
+        location: locationOf(item.cityName, item.areaDistrict), source: this.source, url: jobUrl, jd_fulltext: jd,
+      });
+      let detailStatus: NonNullable<RawJob['crawl_observation']>['detailStatus'] = stored ? 'reused' : 'missing';
+      if (stored) jd = stored;
+      else if (jobId) {
         try {
           const detailUrl = new URL(`https://www.zhipin.com/job_detail/${jobId}.html`);
           if (listData.lid) detailUrl.searchParams.set('lid', listData.lid);
@@ -156,9 +175,11 @@ export class BossCrawler extends BaseCrawler {
             ['.job-sec-text', '.job-detail-section .text'],
             20_000
           ) || jd;
+          detailStatus = jd.trim().length >= 80 ? 'full' : 'list_fallback';
           await this.randomDelay();
         } catch (error) {
           console.warn(`[boss] 详情降级为列表数据：${item.jobName}：${(error as Error).message}`);
+          detailStatus = jd.trim() ? 'list_fallback' : 'missing';
         }
       }
       const title = item.jobName.trim();
@@ -176,7 +197,7 @@ export class BossCrawler extends BaseCrawler {
         salary: item.salaryDesc || '',
         location: locationOf(item.cityName, item.areaDistrict),
         source: this.source,
-        url: jobId ? `https://www.zhipin.com/job_detail/${jobId}.html` : '',
+        url: jobUrl,
         jd_fulltext: jd,
         experience,
         education,
@@ -187,6 +208,7 @@ export class BossCrawler extends BaseCrawler {
         company_industry: (item.brandIndustryName || item.brandIndustry)?.trim() || undefined,
         company_stage: (item.brandStageName || item.brandStage)?.trim() || undefined,
         company_scale: (item.brandScaleName || item.brandScale)?.trim() || undefined,
+        crawl_observation: { platformJobId: jobId || undefined, detailStatus },
       });
     }
     return jobs;

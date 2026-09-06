@@ -96,6 +96,7 @@ after(async () => {
 });
 
 describe('HTTP API', () => {
+  const mutationHeaders = { 'content-type': 'application/json', 'x-job-hunter-request': '1' };
   function requestWithHost(host: string): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {
       const req = request({
@@ -138,6 +139,9 @@ describe('HTTP API', () => {
     const result = await response.json();
     assert.equal(response.status, 200);
     assert.equal(result.data.version, APP_VERSION);
+    assert.match(result.data.nodeVersion, /^v24\./);
+    assert.equal(result.data.platform, process.platform);
+    assert.equal(result.data.schemaVersion, 2);
     assert.equal(typeof result.data.uptimeSeconds, 'number');
     assert.deepEqual(result.data.jobs, { active: 1, archived: 1, total: 2 });
     assert.equal(result.data.task, null);
@@ -146,7 +150,7 @@ describe('HTTP API', () => {
   it('支持单平台抓取任务并拒绝多平台并发', async () => {
     for (const source of ['boss', 'liepin', 'zhaopin']) {
       const response = await fetch(`${origin}/api/crawl`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST', headers: mutationHeaders,
         body: JSON.stringify({ sources: [source], keywords: ['AI'], pages: 1 }),
       });
       const result = await response.json();
@@ -155,7 +159,7 @@ describe('HTTP API', () => {
     }
 
     const response = await fetch(`${origin}/api/crawl`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST', headers: mutationHeaders,
       body: JSON.stringify({ sources: ['boss', 'liepin'], keywords: ['AI'], pages: 1 }),
     });
     assert.equal(response.status, 400);
@@ -170,7 +174,12 @@ describe('HTTP API', () => {
   });
 
   it('静态首页、脚本与状态接口可访问', async () => {
-    assert.equal((await fetch(`${origin}/`)).status, 200);
+    const home = await fetch(`${origin}/`);
+    assert.equal(home.status, 200);
+    assert.match(home.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/);
+    assert.equal(home.headers.get('x-frame-options'), 'DENY');
+    assert.equal(home.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(home.headers.get('permissions-policy') ?? '', /camera=\(\)/);
     assert.equal((await fetch(`${origin}/app.js`)).status, 200);
     assert.equal((await fetch(`${origin}/api/status`)).status, 200);
   });
@@ -189,10 +198,16 @@ describe('HTTP API', () => {
 
     const localOrigin = await fetch(`${origin}/api/config`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', origin },
+      headers: { ...mutationHeaders, origin },
       body: JSON.stringify({ cityCode: '101010100', keywords: ['AI'] }),
     });
     assert.equal(localOrigin.status, 200);
+
+    const missingMarker = await fetch(`${origin}/api/config`, {
+      method: 'PUT', headers: { 'content-type': 'application/json', origin },
+      body: JSON.stringify({ keywords: ['AI'] }),
+    });
+    assert.equal(missingMarker.status, 403);
   });
 
   it('返回简历/API 状态并生成岗位打招呼文案', async () => {
@@ -200,7 +215,7 @@ describe('HTTP API', () => {
     assert.equal(profile.data.resumeConfigured, true);
     assert.equal(profile.data.model, 'deepseek-chat');
     const target = store.listJobs()[0];
-    const response = await fetch(`${origin}/api/jobs/${target.id}/greeting`, { method: 'POST' });
+    const response = await fetch(`${origin}/api/jobs/${target.id}/greeting`, { method: 'POST', headers: mutationHeaders });
     const result = await response.json();
     assert.equal(response.status, 200);
     assert.match(result.data.text, /AI Agent工程师/);
@@ -212,7 +227,7 @@ describe('HTTP API', () => {
     const content = '本科，拥有五年产品与数据分析经验，负责需求调研、用户访谈、产品规划、项目交付和复盘。'.repeat(3);
     const saved = await fetch(`${origin}/api/resume`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: mutationHeaders,
       body: JSON.stringify({ content }),
     });
     assert.equal(saved.status, 200);
@@ -223,13 +238,14 @@ describe('HTTP API', () => {
   it('支持读取并保存公开版配置和用户画像', async () => {
     const setup = await fetch(`${origin}/api/setup/status`).then((response) => response.json());
     assert.equal(setup.ok, true);
+    assert.equal('dataDir' in setup.data, false);
     const initialConfig = await fetch(`${origin}/api/config`).then((response) => response.json());
     assert.notEqual(initialConfig.data.defaults.llm.apiKey, 'env-key-should-not-leak');
     assert.equal(initialConfig.data.defaults.llm.apiKey, '');
 
     const configResponse = await fetch(`${origin}/api/config`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: mutationHeaders,
       body: JSON.stringify({
         cityCode: '101010100',
         keywords: ['产品经理'],
@@ -248,7 +264,7 @@ describe('HTTP API', () => {
 
     const profileResponse = await fetch(`${origin}/api/profile`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: mutationHeaders,
       body: JSON.stringify({ careerStage: 'career_change', targetTracks: ['ai_product'], experienceYears: 5, salaryFloorK: 20 }),
     });
     assert.equal(profileResponse.status, 200);
@@ -261,7 +277,7 @@ describe('HTTP API', () => {
     const target = store.listJobs()[0];
     const response = await fetch(`${origin}/api/jobs/${target.id}/contact`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
+      headers: mutationHeaders,
       body: JSON.stringify({ status: 'applied', notes: '已在 BOSS 投递' }),
     });
     const result = await response.json();
@@ -271,7 +287,7 @@ describe('HTTP API', () => {
 
     const closedResponse = await fetch(`${origin}/api/jobs/${target.id}/contact`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
+      headers: mutationHeaders,
       body: JSON.stringify({ status: 'closed' }),
     });
     const closed = await closedResponse.json();

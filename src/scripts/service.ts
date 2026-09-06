@@ -95,7 +95,7 @@ async function launchctl(args: string[], ignoreFailure = false): Promise<string>
   } catch (error) {
     if (ignoreFailure) return '';
     const detail = (error as { stderr?: string; message: string }).stderr?.trim() || (error as Error).message;
-    throw new Error(`launchctl ${args[0]} 失败：${detail}`);
+    throw new Error(`launchctl ${args[0]} 失败：${detail}`, { cause: error });
   }
 }
 

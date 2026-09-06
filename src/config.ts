@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { loadEnvFile } from 'node:process';
@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { CandidateProfile, CrawlConfig, JobSource, UserSettings } from './types.js';
 import { CITY_CODES, cityNameFromBossCode, normalizeCityName } from './cities.js';
+import { enablePrivateFileCreation, ensurePrivateDirectory, ensurePrivateFile, writePrivateTextFile } from './file-security.js';
+
+enablePrivateFileCreation();
 
 export const PROJECT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const envPath = resolve(PROJECT_ROOT, '.env');
@@ -33,7 +36,7 @@ function defaultDataDir(): string {
 }
 
 const EnvSchema = z.object({
-  PORT: intFromString(3000, 1, 65535),
+  PORT: intFromString(17321, 1, 65535),
   APP_HOST: z.enum(['127.0.0.1', 'localhost', '::1']).default('127.0.0.1'),
   APP_DATA_DIR: z.string().default(defaultDataDir()),
   LLM_API_BASE: z.string().url().default('https://api.deepseek.com/v1'),
@@ -48,6 +51,7 @@ const EnvSchema = z.object({
   CRAWL_DELAY_MIN_MS: intFromString(3_000, 0, 60_000),
   CRAWL_DELAY_MAX_MS: intFromString(8_000, 0, 120_000),
   CRAWL_KEYWORDS: z.string().default(''),
+  BOSS_ADAPTIVE_MIN_UNIQUE: intFromString(2, 0, 100),
   BOSS_CDP_PORT: intFromString(9222, 1024, 65535),
   LIEPIN_CDP_PORT: intFromString(9223, 1024, 65535),
   ZHAOPIN_CDP_PORT: intFromString(9224, 1024, 65535),
@@ -79,6 +83,10 @@ export const DEFAULT_KEYWORDS = [
 ];
 
 export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
+  schemaVersion: 1,
+  profileVersion: 1,
+  updatedAt: new Date(0).toISOString(),
+  strategyTemplate: 'general',
   careerStage: 'experienced',
   targetTracks: ['product'],
   education: '未配置',
@@ -86,6 +94,9 @@ export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
   salaryFloorK: 0,
   salaryExpectK: 0,
   locationScore: {},
+  salesRiskTolerance: 'balanced',
+  blockedCompanies: [],
+  blockedKeywords: [],
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -107,7 +118,6 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   },
 };
 
-const JobSourceSchema = z.enum(['boss', 'liepin', 'zhaopin']);
 const SettingsSchema = z.object({
   setupCompleted: z.boolean().default(false),
   cityCode: z.string().regex(/^\d{9}$/).default(DEFAULT_USER_SETTINGS.cityCode),
@@ -132,6 +142,10 @@ const SettingsSchema = z.object({
 });
 
 const ProfileSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  profileVersion: z.number().int().min(1).default(1),
+  updatedAt: z.string().datetime().default(DEFAULT_CANDIDATE_PROFILE.updatedAt),
+  strategyTemplate: z.enum(['general', 'custom']).default(DEFAULT_CANDIDATE_PROFILE.strategyTemplate),
   careerStage: z.enum(['internship', 'new_grad', 'experienced', 'career_change']).default(DEFAULT_CANDIDATE_PROFILE.careerStage),
   targetTracks: z.array(z.enum(['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research', 'pure_sales', 'product', 'engineering', 'operations', 'design', 'data', 'consulting', 'customer_service', 'other']))
     .min(1).max(5).default(DEFAULT_CANDIDATE_PROFILE.targetTracks),
@@ -140,6 +154,9 @@ const ProfileSchema = z.object({
   salaryFloorK: z.number().min(0).max(300).default(DEFAULT_CANDIDATE_PROFILE.salaryFloorK),
   salaryExpectK: z.number().min(0).max(500).default(DEFAULT_CANDIDATE_PROFILE.salaryExpectK),
   locationScore: z.record(z.string().min(1).max(30), z.number().min(0).max(10)).default(DEFAULT_CANDIDATE_PROFILE.locationScore),
+  salesRiskTolerance: z.enum(['avoid', 'balanced', 'accept']).default(DEFAULT_CANDIDATE_PROFILE.salesRiskTolerance),
+  blockedCompanies: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
+  blockedKeywords: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
 });
 
 function readJson(path: string): unknown {
@@ -148,8 +165,8 @@ function readJson(path: string): unknown {
 }
 
 function writeJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  ensurePrivateDirectory(dirname(path));
+  writePrivateTextFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function loadUserSettings(): UserSettings {
@@ -179,14 +196,23 @@ export function saveUserSettings(input: unknown): UserSettings {
 }
 
 export function loadCandidateProfile(): CandidateProfile {
-  const parsedProfile = ProfileSchema.safeParse(readJson(PROFILE_PATH) ?? {});
-  return parsedProfile.success ? parsedProfile.data as CandidateProfile : DEFAULT_CANDIDATE_PROFILE;
+  const raw = readJson(PROFILE_PATH);
+  const parsedProfile = ProfileSchema.safeParse(raw ?? {});
+  if (!parsedProfile.success) return structuredClone(DEFAULT_CANDIDATE_PROFILE);
+  const profile = parsedProfile.data as CandidateProfile;
+  if (raw && typeof raw === 'object' && !('schemaVersion' in raw)) profile.strategyTemplate = 'custom';
+  return profile;
 }
 
 export function saveCandidateProfile(input: unknown): CandidateProfile {
+  const current = loadCandidateProfile();
+  const changes = typeof input === 'object' && input ? input as Partial<CandidateProfile> : {};
   const profile = ProfileSchema.parse({
-    ...loadCandidateProfile(),
-    ...(typeof input === 'object' && input ? input : {}),
+    ...current,
+    ...changes,
+    schemaVersion: 1,
+    profileVersion: current.profileVersion + 1,
+    updatedAt: new Date().toISOString(),
   });
   writeJson(PROFILE_PATH, profile);
   return profile as CandidateProfile;
@@ -274,6 +300,15 @@ export function getCrawlConfig(overrides: Partial<CrawlConfig> = {}): CrawlConfi
     cdpPorts: ports,
     cityCode: settings.cityCode,
     cities: settings.cities,
+    adaptiveMinUnique: parsed.BOSS_ADAPTIVE_MIN_UNIQUE,
     ...overrides,
   };
+}
+
+ensurePrivateDirectory(DATA_DIR);
+for (const directory of ['auth', 'diagnostics', 'logs', 'profile', 'backups']) {
+  ensurePrivateDirectory(resolve(DATA_DIR, directory));
+}
+for (const path of [SETTINGS_PATH, PROFILE_PATH, RESUME_PATH, resolve(DATA_DIR, 'job-hunter.sqlite')]) {
+  ensurePrivateFile(path);
 }

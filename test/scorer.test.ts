@@ -52,13 +52,14 @@ function scoreFor(raw: RawJob, companyProfile: CompanyProfile | null = null) {
   return scoreWithRules(raw, null, TEST_PROFILE, companyProfile, TEST_RESUME);
 }
 
-describe('个性化评分 v6', () => {
+describe('通用评分 v7', () => {
   it('编码岗位不再因固定候选人画像自动降档', () => {
     const score = scoreFor(job());
     assert.equal(score.track, 'ai_solutions');
     assert.equal(score.grade, 'B');
     assert.ok(score.total < 80);
-    assert.equal(score.score_version, 6);
+    assert.equal(score.score_version, 7);
+    assert.equal(score.total, score.interview_fit_score);
     assert.equal(score.company_quality_score, 70);
     assert.equal(score.scoring_mode, 'rules');
     assert.ok(score.matched_skills.includes('AI 应用'));
@@ -106,14 +107,14 @@ describe('个性化评分 v6', () => {
     assert.equal(score.red_flags.some((flag) => flag.includes('销售指标')), false);
   });
 
-  it('销售岗位不再因销售指标本身被自动扣分', () => {
+  it('非销售目标画像会按容忍度处理销售指标风险', () => {
     const score = scoreFor(job({
       title: 'AI产品销售经理',
       jd_fulltext: '负责完成季度销售KPI、拓展客户、获客并维护自带客户资源，销售公司的人工智能产品。',
     }));
     assert.equal(score.track, 'pure_sales');
     assert.equal(score.grade, 'C');
-    assert.equal(score.dimensions.risk_penalty, 0);
+    assert.equal(score.dimensions.risk_penalty, -10);
   });
 
   it('方案型销售、签单回款和业绩目标最高为 C', () => {
@@ -212,7 +213,7 @@ describe('个性化评分 v6', () => {
       jd_fulltext: '负责销售KPI、客户获客和业绩指标，需要自带客户资源。',
     }));
     assert.equal(strong.grade, 'C');
-    assert.equal(weak.grade, 'C');
+    assert.equal(weak.grade, 'D');
     assert.match(strong.summary, /猎头发布/);
     assert.ok(strong.evidence.some((item) => item.text.includes('统一归为 C 级')));
   });
@@ -282,7 +283,7 @@ describe('个性化评分 v6', () => {
     assert.ok(risky.red_flags.some((flag) => flag.includes('仅提示')));
   });
 
-  it('未配置公司偏好时公司画像保持中性分并保留事实信号', () => {
+  it('公司质量独立展示且不改变岗位最终分', () => {
     const good = scoreFor(job(), company({
       quality_score: 90,
       company_type: 'foreign',
@@ -297,8 +298,8 @@ describe('个性化评分 v6', () => {
       red_flags: ['外包、派遣或驻场', '大小周'],
       reputation_summary: '外包且大小周',
     }));
-    assert.equal(good.company_quality_score, 70);
-    assert.equal(bad.company_quality_score, 70);
+    assert.equal(good.company_quality_score, 90);
+    assert.equal(bad.company_quality_score, 35);
     assert.equal(good.total, bad.total);
     assert.ok(bad.red_flags.includes('大小周'));
     assert.ok(bad.evidence.some((item) => item.category === 'company' && item.text.includes('外包且大小周')));
@@ -330,8 +331,8 @@ describe('个性化评分 v6', () => {
       tags: ['售前', '大模型'],
       jd_fulltext: '负责 RAG 与 Agent 方案演示、客户沟通、需求调研和培训。',
     }));
-    assert.deepEqual(score.required_gaps, []);
     assert.equal(score.required_gaps.includes('TypeScript/JavaScript 工程开发'), false);
+    assert.deepEqual(score.required_gaps, []);
   });
 });
 

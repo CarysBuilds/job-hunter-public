@@ -10,7 +10,7 @@
   <header class="app-header">
     <div class="header-left">
       <h1>Job Hunter</h1>
-      <span class="subtitle">本地岗位抓取与匹配评估 · Windows 公共版</span>
+      <span class="subtitle">本地岗位抓取与匹配评估 · 桌面公共版</span>
     </div>
     <div class="header-right">
       <button id="btn-refresh" class="btn btn-secondary">刷新数据</button>
@@ -25,11 +25,29 @@
     </div>
   </header>
 
+  <nav class="primary-nav" aria-label="工作台导航">
+    <button class="nav-tab active" data-view="today">今日行动</button>
+    <button class="nav-tab" data-view="jobs">全部岗位</button>
+    <button class="nav-tab" data-view="profile">我的资料</button>
+    <button class="nav-tab" data-view="more">更多</button>
+  </nav>
+
   <!-- 状态条 -->
   <div id="status-bar" class="status-bar hidden">
     <span class="status-dot"></span>
     <span id="status-text">就绪</span>
   </div>
+
+  <main id="today-view" class="workspace-view">
+    <div class="workspace-heading">
+      <div><h2>今日行动</h2><p class="muted">只呈现下一步动作；沟通内容始终是草稿，由你复制并手动发送。</p></div>
+      <button id="btn-today-refresh" class="btn btn-secondary">刷新队列</button>
+    </div>
+    <div id="today-summary" class="stats-row"></div>
+    <div id="today-queues" class="queue-grid"></div>
+  </main>
+
+  <main id="jobs-view" class="workspace-view hidden">
 
   <!-- 筛选栏 -->
   <div class="toolbar">
@@ -113,6 +131,37 @@
       <p id="empty-hint" class="muted">点击任一平台抓取按钮获取岗位，或用 <code>npm run mock</code> 生成测试数据</p>
     </div>
   </div>
+  </main>
+
+  <main id="profile-view" class="workspace-view hidden">
+    <div class="workspace-heading">
+      <div><h2>我的资料</h2><p class="muted">画像、简历和策略模板只保存在本机。</p></div>
+      <button id="btn-profile-edit" class="btn btn-primary">编辑资料</button>
+    </div>
+    <div id="profile-summary" class="info-panel"></div>
+  </main>
+
+  <main id="more-view" class="workspace-view hidden">
+    <div class="workspace-heading"><div><h2>更多</h2><p class="muted">任务诊断、来源健康和数据导出。</p></div></div>
+    <section class="info-panel">
+      <h3>来源健康</h3>
+      <div id="source-health" class="health-grid"></div>
+    </section>
+    <section class="info-panel">
+      <h3>数据导出</h3>
+      <p class="muted">导出包含生成时间与 schema 版本；CSV 会中和公式前缀。</p>
+      <div class="button-row">
+        <button class="btn btn-secondary" data-export="jobs:csv">岗位 CSV</button>
+        <button class="btn btn-secondary" data-export="jobs:json">岗位 JSON</button>
+        <button class="btn btn-secondary" data-export="contacts:csv">沟通 CSV</button>
+        <button class="btn btn-secondary" data-export="contacts:json">沟通 JSON</button>
+      </div>
+    </section>
+    <section class="info-panel">
+      <h3>最近任务</h3>
+      <div id="run-history"></div>
+    </section>
+  </main>
 
   <!-- 详情面板（侧滑） -->
   <div id="detail-overlay" class="detail-overlay hidden">

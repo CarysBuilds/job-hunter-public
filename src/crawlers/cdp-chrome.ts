@@ -8,10 +8,6 @@ import type { CrawlConfig, JobSource } from '../types.js';
 
 const execFileAsync = promisify(execFile);
 
-interface CdpVersion {
-  webSocketDebuggerUrl: string;
-}
-
 interface CdpTarget {
   id: string;
   type: string;

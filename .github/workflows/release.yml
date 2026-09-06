@@ -23,11 +23,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run test:ci
-      - run: npm run build
-      - run: npm run scan:sensitive
+      - run: npm ci --ignore-scripts
+      - run: npm run check
       - run: npm run package:windows
       - run: npm run scan:sensitive -- --include-build
       - name: Read package version
@@ -44,14 +41,46 @@ jobs:
           JOB_HUNTER_OUTPUT: ${{ github.workspace }}\artifacts\windows
         with:
           path: packaging/windows/JobHunter.iss
+      - run: npm run smoke:windows
+      - name: Write installer SHA-256
+        shell: pwsh
+        run: |
+          $path = "artifacts/windows/JobHunter-Setup-x64.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+          "$hash  JobHunter-Setup-x64.exe" | Set-Content -Encoding ascii "$path.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: JobHunter-Setup-x64
-          path: artifacts/windows/JobHunter-Setup-x64.exe
+          path: |
+            artifacts/windows/JobHunter-Setup-x64.exe
+            artifacts/windows/JobHunter-Setup-x64.exe.sha256
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run package:macos
+      - run: npm run smoke:macos
+      - run: npm run scan:sensitive -- --include-build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: JobHunter-macOS-Universal
+          path: |
+            artifacts/macos/JobHunter-macOS-Universal-v*.dmg
+            artifacts/macos/JobHunter-macOS-Universal-v*.dmg.sha256
 
   release:
     if: github.event_name == 'release'
-    needs: test
+    needs: [test, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -60,7 +89,15 @@ jobs:
         with:
           name: JobHunter-Setup-x64
           path: artifacts/windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: JobHunter-macOS-Universal
+          path: artifacts/macos
       - name: Upload release asset
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: artifacts/windows/JobHunter-Setup-x64.exe
+          files: |
+            artifacts/windows/JobHunter-Setup-x64.exe
+            artifacts/windows/JobHunter-Setup-x64.exe.sha256
+            artifacts/macos/JobHunter-macOS-Universal-v*.dmg
+            artifacts/macos/JobHunter-macOS-Universal-v*.dmg.sha256

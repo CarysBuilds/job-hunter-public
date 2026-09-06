@@ -84,7 +84,7 @@ describe('BOSS 公司画像与复用', () => {
     assert.equal(store.getCompanyProfile('同一家公司')?.quality_score, 92);
     assert.equal(jobs.length, 2);
     assert.equal(jobs[0].company_profile?.quality_score, 92);
-    assert.equal(jobs[0].score.company_quality_score, 70);
+    assert.equal(jobs[0].score.company_quality_score, 92);
     store.close();
   });
 

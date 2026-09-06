@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,14 +7,24 @@ import { canonicalizeJobUrl, createContentFingerprint, createJobId, normalizeFin
 import { parseSalary, scoreWithRules } from '../scorer/rules.js';
 import { normalizeCompanyKey } from '../services/company-profile-service.js';
 import { readOptionalResume } from '../services/resume-service.js';
+import { createVerifiedDatabaseBackup } from './database-safety.js';
+import { ensurePrivateDirectory, ensurePrivateFile } from '../file-security.js';
 import type {
+  ApplicationEvent,
+  ApplicationEventType,
   CompanyProfile,
   ContactStatus,
+  ContactFunnelStats,
+  ContactOutcome,
+  CrawlJobObservation,
   CrawlRun,
+  CrawlRunPage,
   Grade,
+  JobContentVersion,
   JobContact,
   JobFilters,
   JobSource,
+  JobSourceHealth,
   LifecycleStatus,
   RawJob,
   RunOperation,
@@ -32,7 +42,8 @@ function safeJson<T>(raw: string, fallback: T): T {
 }
 
 const RUN_HEARTBEAT_STALE_MS = 2 * 60 * 1000;
-const PROTECTED_CONTACT_STATUSES: ContactStatus[] = ['drafted', 'greeted', 'applied', 'interviewing', 'follow_up'];
+export const CURRENT_SCHEMA_VERSION = 2;
+const PROTECTED_CONTACT_STATUSES: ContactStatus[] = ['drafted', 'greeted', 'ready_to_apply', 'applied', 'interviewing', 'follow_up'];
 type ArchiveDaysConfig = number | Partial<Record<Grade, number>>;
 
 function isProcessAlive(pid: number | null | undefined): boolean {
@@ -97,10 +108,17 @@ interface JobContactRow {
   job_id: string;
   status: ContactStatus;
   greeted_at: string | null;
+  ready_to_apply_at: string | null;
+  applied_at: string | null;
+  interviewing_at: string | null;
   platform: JobSource | null;
   last_message: string | null;
   next_follow_up_at: string | null;
   notes: string | null;
+  outcome: ContactOutcome | null;
+  outcome_at: string | null;
+  communication_source: JobContact['communication_source'] | null;
+  communication_verified_at: string | null;
   updated_at: string;
 }
 
@@ -127,10 +145,17 @@ function rowToContact(row: JobContactRow): JobContact {
     job_id: row.job_id,
     status: row.status,
     greeted_at: row.greeted_at ?? undefined,
+    ready_to_apply_at: row.ready_to_apply_at ?? undefined,
+    applied_at: row.applied_at ?? undefined,
+    interviewing_at: row.interviewing_at ?? undefined,
     platform: row.platform ?? undefined,
     last_message: row.last_message ?? undefined,
     next_follow_up_at: row.next_follow_up_at ?? undefined,
     notes: row.notes ?? undefined,
+    outcome: row.outcome ?? undefined,
+    outcome_at: row.outcome_at ?? undefined,
+    communication_source: row.communication_source ?? undefined,
+    communication_verified_at: row.communication_verified_at ?? undefined,
     updated_at: row.updated_at,
   };
 }
@@ -205,8 +230,19 @@ export class JobStore {
   constructor(databasePath = appConfig.databasePath) {
     this.databasePath = databasePath;
     mkdirSync(dirname(databasePath), { recursive: true });
+    ensurePrivateDirectory(dirname(databasePath));
     this.db = new DatabaseSync(databasePath);
+    ensurePrivateFile(databasePath);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    const schemaVersion = Number(Object.values(this.db.prepare('PRAGMA user_version').get() as Record<string, unknown>)[0] ?? 0);
+    if (schemaVersion > CURRENT_SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(`数据库 schema 版本 ${schemaVersion} 高于当前程序支持的 ${CURRENT_SCHEMA_VERSION}，拒绝降级打开`);
+    }
+    const tables = Number((this.db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get() as { count: number }).count);
+    if (schemaVersion < CURRENT_SCHEMA_VERSION && tables > 0) {
+      createVerifiedDatabaseBackup(databasePath, { kind: `pre-migration-v${schemaVersion}` });
+    }
     this.initialize();
   }
 
@@ -275,10 +311,17 @@ export class JobStore {
         job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
         status TEXT NOT NULL,
         greeted_at TEXT,
+        ready_to_apply_at TEXT,
+        applied_at TEXT,
+        interviewing_at TEXT,
         platform TEXT,
         last_message TEXT,
         next_follow_up_at TEXT,
         notes TEXT,
+        outcome TEXT,
+        outcome_at TEXT,
+        communication_source TEXT,
+        communication_verified_at TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_job_contacts_status ON job_contacts(status);
@@ -290,6 +333,8 @@ export class JobStore {
         source TEXT,
         keywords_json TEXT NOT NULL,
         pages INTEGER NOT NULL,
+        min_salary REAL,
+        max_jobs INTEGER,
         current_page INTEGER NOT NULL DEFAULT 0,
         total_pages INTEGER NOT NULL DEFAULT 0,
         found INTEGER NOT NULL DEFAULT 0,
@@ -301,6 +346,7 @@ export class JobStore {
         deduplicated INTEGER NOT NULL DEFAULT 0,
         message TEXT NOT NULL,
         error TEXT,
+        failure_category TEXT,
         worker_pid INTEGER,
         heartbeat_at TEXT,
         started_at TEXT,
@@ -308,6 +354,86 @@ export class JobStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_runs_created ON crawl_runs(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS crawl_run_pages (
+        run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL,
+        keyword TEXT NOT NULL,
+        city TEXT NOT NULL,
+        page_number INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        raw_count INTEGER NOT NULL DEFAULT 0,
+        unique_count INTEGER NOT NULL DEFAULT 0,
+        saved INTEGER NOT NULL DEFAULT 0,
+        inserted INTEGER NOT NULL DEFAULT 0,
+        updated INTEGER NOT NULL DEFAULT 0,
+        deduplicated INTEGER NOT NULL DEFAULT 0,
+        detail_failed INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        committed_at TEXT,
+        PRIMARY KEY(run_id, ordinal)
+      );
+      CREATE TABLE IF NOT EXISTS crawl_run_fingerprints (
+        run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+        fingerprint TEXT NOT NULL,
+        PRIMARY KEY(run_id, fingerprint)
+      );
+      CREATE TABLE IF NOT EXISTS crawl_job_observations (
+        run_id TEXT NOT NULL REFERENCES crawl_runs(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL,
+        job_id TEXT,
+        source TEXT NOT NULL,
+        platform_job_id TEXT,
+        keyword TEXT NOT NULL,
+        city TEXT NOT NULL,
+        page_number INTEGER NOT NULL,
+        rank INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        company TEXT NOT NULL,
+        url TEXT NOT NULL,
+        disposition TEXT NOT NULL,
+        detail_status TEXT NOT NULL,
+        observed_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_crawl_observations_run ON crawl_job_observations(run_id, ordinal);
+      CREATE TABLE IF NOT EXISTS source_health_checks (
+        source TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        last_success_at TEXT,
+        last_failure_at TEXT,
+        last_error TEXT,
+        detail_missing_count INTEGER NOT NULL DEFAULT 0,
+        checked_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS application_events (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        stage TEXT,
+        note TEXT,
+        reason_code TEXT,
+        occurred_at TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_application_events_job ON application_events(job_id, occurred_at DESC);
+      CREATE TABLE IF NOT EXISTS job_content_versions (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        origin TEXT NOT NULL,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        UNIQUE(job_id, content_hash)
+      );
+      CREATE TABLE IF NOT EXISTS delete_challenges (
+        token TEXT PRIMARY KEY,
+        expected_count INTEGER NOT NULL,
+        confirmation TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT
+      );
     `);
     const jobColumns = new Set(
       (this.db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>).map((column) => column.name)
@@ -330,8 +456,17 @@ export class JobStore {
     for (const column of ['inserted', 'updated', 'reactivated', 'archived', 'deduplicated']) {
       if (!runColumns.has(column)) this.db.exec(`ALTER TABLE crawl_runs ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!runColumns.has('min_salary')) this.db.exec('ALTER TABLE crawl_runs ADD COLUMN min_salary REAL');
+    if (!runColumns.has('max_jobs')) this.db.exec('ALTER TABLE crawl_runs ADD COLUMN max_jobs INTEGER');
     if (!runColumns.has('worker_pid')) this.db.exec('ALTER TABLE crawl_runs ADD COLUMN worker_pid INTEGER');
     if (!runColumns.has('heartbeat_at')) this.db.exec('ALTER TABLE crawl_runs ADD COLUMN heartbeat_at TEXT');
+    if (!runColumns.has('failure_category')) this.db.exec('ALTER TABLE crawl_runs ADD COLUMN failure_category TEXT');
+    const contactColumns = new Set(
+      (this.db.prepare('PRAGMA table_info(job_contacts)').all() as Array<{ name: string }>).map((column) => column.name)
+    );
+    for (const column of ['ready_to_apply_at', 'applied_at', 'interviewing_at', 'outcome', 'outcome_at', 'communication_source', 'communication_verified_at']) {
+      if (!contactColumns.has(column)) this.db.exec(`ALTER TABLE job_contacts ADD COLUMN ${column} TEXT`);
+    }
     this.db.exec("UPDATE crawl_runs SET worker_pid = NULL, heartbeat_at = NULL WHERE status NOT IN ('queued', 'running')");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS job_aliases (
@@ -387,6 +522,11 @@ export class JobStore {
     this.markInterruptedRuns();
     this.archiveClosedJobs();
     this.archiveStaleJobs();
+    this.db.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`);
+  }
+
+  schemaVersion(): number {
+    return Number(Object.values(this.db.prepare('PRAGMA user_version').get() as Record<string, unknown>)[0] ?? 0);
   }
 
   migrateLegacyJson(path = appConfig.legacyJobsPath): number {
@@ -447,7 +587,7 @@ export class JobStore {
     return this.upsertJobsDetailed(jobs).saved;
   }
 
-  upsertJobsDetailed(jobs: ScoredJob[]): UpsertStats {
+  upsertJobsDetailed(jobs: ScoredJob[], withinTransaction = false): UpsertStats {
     const stats: UpsertStats = { saved: 0, inserted: 0, updated: 0, reactivated: 0, deduplicated: 0 };
     if (!jobs.length) return stats;
     const seenFingerprints = new Set<string>();
@@ -499,7 +639,7 @@ export class JobStore {
         canonical_job_id = excluded.canonical_job_id,
         created_at = excluded.created_at
     `);
-    this.db.exec('BEGIN IMMEDIATE');
+    if (!withinTransaction) this.db.exec('BEGIN IMMEDIATE');
     try {
       for (const job of jobs) {
         const now = new Date().toISOString();
@@ -568,10 +708,10 @@ export class JobStore {
           stats.saved++;
         }
       }
-      this.db.exec('COMMIT');
+      if (!withinTransaction) this.db.exec('COMMIT');
       return stats;
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      if (!withinTransaction) this.db.exec('ROLLBACK');
       throw error;
     }
   }
@@ -627,9 +767,9 @@ export class JobStore {
       WHEN score_grade = 'B' THEN 2
       WHEN score_grade = 'C' THEN 3
       ELSE 4
-    END, score_total DESC, updated_at DESC`;
+    END, score_total DESC, COALESCE(json_extract(score_json, '$.company_quality_score'), 70) DESC, updated_at DESC`;
     const order = filters.sort === 'score-desc'
-      ? 'score_total DESC, updated_at DESC'
+      ? "score_total DESC, COALESCE(json_extract(score_json, '$.company_quality_score'), 70) DESC, updated_at DESC"
       : filters.sort === 'fresh-desc'
         ? 'last_seen_at DESC, score_total DESC'
         : filters.sort === 'salary-desc'
@@ -644,6 +784,17 @@ export class JobStore {
   getJob(id: string): ScoredJob | null {
     const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as unknown as JobRow | undefined;
     return row ? this.enrichJob(rowToJob(row)) : null;
+  }
+
+  getJobDetailByUrl(url: string): string | undefined {
+    const canonical = canonicalizeJobUrl(url);
+    if (!canonical) return undefined;
+    const row = this.db.prepare(`
+      SELECT jd_fulltext FROM jobs
+      WHERE url = ? OR id IN (SELECT canonical_job_id FROM job_aliases WHERE alias_url = ?)
+      ORDER BY LENGTH(TRIM(jd_fulltext)) DESC, last_seen_at DESC LIMIT 1
+    `).get(canonical, canonical) as { jd_fulltext?: string } | undefined;
+    return row?.jd_fulltext;
   }
 
   getCompanyProfile(companyKeyOrName: string): CompanyProfile | null {
@@ -700,21 +851,38 @@ export class JobStore {
       job_id: jobId,
       updated_at: updatedAt,
     };
+    if (next.status === 'greeted' && !next.greeted_at) next.greeted_at = updatedAt;
+    if (next.status === 'ready_to_apply' && !next.ready_to_apply_at) next.ready_to_apply_at = updatedAt;
+    if (next.status === 'applied' && !next.applied_at) next.applied_at = updatedAt;
+    if (next.status === 'interviewing' && !next.interviewing_at) next.interviewing_at = updatedAt;
+    if (next.outcome && !next.outcome_at) next.outcome_at = updatedAt;
     this.db.prepare(`
       INSERT INTO job_contacts (
-        job_id, status, greeted_at, platform, last_message, next_follow_up_at, notes, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        job_id, status, greeted_at, ready_to_apply_at, applied_at, interviewing_at,
+        platform, last_message, next_follow_up_at, notes, outcome, outcome_at,
+        communication_source, communication_verified_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(job_id) DO UPDATE SET
         status = excluded.status,
         greeted_at = excluded.greeted_at,
+        ready_to_apply_at = excluded.ready_to_apply_at,
+        applied_at = excluded.applied_at,
+        interviewing_at = excluded.interviewing_at,
         platform = excluded.platform,
         last_message = excluded.last_message,
         next_follow_up_at = excluded.next_follow_up_at,
         notes = excluded.notes,
+        outcome = excluded.outcome,
+        outcome_at = excluded.outcome_at,
+        communication_source = excluded.communication_source,
+        communication_verified_at = excluded.communication_verified_at,
         updated_at = excluded.updated_at
     `).run(
-      next.job_id, next.status, next.greeted_at ?? null, next.platform ?? null,
-      next.last_message ?? null, next.next_follow_up_at ?? null, next.notes ?? null, next.updated_at
+      next.job_id, next.status, next.greeted_at ?? null, next.ready_to_apply_at ?? null,
+      next.applied_at ?? null, next.interviewing_at ?? null, next.platform ?? null,
+      next.last_message ?? null, next.next_follow_up_at ?? null, next.notes ?? null,
+      next.outcome ?? null, next.outcome_at ?? null, next.communication_source ?? null,
+      next.communication_verified_at ?? null, next.updated_at
     );
     if (next.status === 'closed') {
       this.archiveClosedJobs(new Date(updatedAt));
@@ -730,6 +898,44 @@ export class JobStore {
 
   deleteJobs(): number {
     return Number(this.db.prepare('DELETE FROM jobs').run().changes);
+  }
+
+  createDeleteChallenge(now = new Date()): { token: string; expectedCount: number; confirmation: string; expiresAt: string } {
+    const token = randomUUID();
+    const expectedCount = this.countJobs('all');
+    const confirmation = `DELETE ${expectedCount} JOBS`;
+    const expiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    this.db.prepare('INSERT INTO delete_challenges(token, expected_count, confirmation, expires_at) VALUES (?, ?, ?, ?)')
+      .run(token, expectedCount, confirmation, expiresAt);
+    return { token, expectedCount, confirmation, expiresAt };
+  }
+
+  deleteJobsWithChallenge(input: { token: string; expectedCount: number; confirmation: string }, now = new Date()): { deleted: number; backupPath: string } {
+    const challenge = this.db.prepare('SELECT * FROM delete_challenges WHERE token = ?').get(input.token) as {
+      expected_count: number; confirmation: string; expires_at: string; used_at: string | null;
+    } | undefined;
+    if (!challenge || challenge.used_at) throw new Error('删除挑战不存在或已使用');
+    if (new Date(challenge.expires_at).getTime() < now.getTime()) throw new Error('删除挑战已过期');
+    const actualCount = this.countJobs('all');
+    if (input.expectedCount !== challenge.expected_count || actualCount !== challenge.expected_count) throw new Error('岗位数量已变化，请重新申请删除挑战');
+    if (input.confirmation !== challenge.confirmation) throw new Error(`确认短语必须为：${challenge.confirmation}`);
+    if (this.findActiveRun()) throw new Error('存在活动任务，拒绝删除岗位');
+    let backup: ReturnType<typeof createVerifiedDatabaseBackup>;
+    try {
+      backup = createVerifiedDatabaseBackup(this.databasePath, { kind: 'pre-delete' });
+    } catch {
+      throw new Error('删除前验证备份失败，未删除任何岗位');
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const deleted = Number(this.db.prepare('DELETE FROM jobs').run().changes);
+      this.db.prepare('UPDATE delete_challenges SET used_at = ? WHERE token = ?').run(now.toISOString(), input.token);
+      this.db.exec('COMMIT');
+      return { deleted, backupPath: backup.path };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   deleteDemoJobs(): number {
@@ -789,7 +995,7 @@ export class JobStore {
     return counts;
   }
 
-  createRun(input: { operation: RunOperation; source?: JobSource; keywords?: string[]; pages?: number }): CrawlRun {
+  createRun(input: { operation: RunOperation; source?: JobSource; keywords?: string[]; pages?: number; minSalary?: number; maxJobs?: number }): CrawlRun {
     const createdAt = new Date().toISOString();
     const run: CrawlRun = {
       id: randomUUID(),
@@ -798,6 +1004,8 @@ export class JobStore {
       source: input.source ?? null,
       keywords: input.keywords ?? [],
       pages: input.pages ?? 0,
+      minSalary: input.minSalary,
+      maxJobs: input.maxJobs,
       currentPage: 0,
       totalPages: (input.pages ?? 0) * (input.keywords?.length ?? 0),
       found: 0,
@@ -812,14 +1020,14 @@ export class JobStore {
     };
     this.db.prepare(`
       INSERT INTO crawl_runs (
-        id, operation, status, source, keywords_json, pages, current_page, total_pages,
+        id, operation, status, source, keywords_json, pages, min_salary, max_jobs, current_page, total_pages,
         found, saved, inserted, updated, reactivated, archived, deduplicated,
-        message, error, worker_pid, heartbeat_at, started_at, finished_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        message, error, failure_category, worker_pid, heartbeat_at, started_at, finished_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      run.id, run.operation, run.status, run.source, JSON.stringify(run.keywords), run.pages,
+      run.id, run.operation, run.status, run.source, JSON.stringify(run.keywords), run.pages, run.minSalary ?? null, run.maxJobs ?? null,
       run.currentPage, run.totalPages, run.found, run.saved, run.inserted, run.updated,
-      run.reactivated, run.archived, run.deduplicated, run.message, null, null, null, null, null, run.createdAt
+      run.reactivated, run.archived, run.deduplicated, run.message, null, null, null, null, null, null, run.createdAt
     );
     return run;
   }
@@ -830,16 +1038,16 @@ export class JobStore {
     const next = { ...current, ...changes };
     this.db.prepare(`
       UPDATE crawl_runs SET
-        operation = ?, status = ?, source = ?, keywords_json = ?, pages = ?, current_page = ?,
+        operation = ?, status = ?, source = ?, keywords_json = ?, pages = ?, min_salary = ?, max_jobs = ?, current_page = ?,
         total_pages = ?, found = ?, saved = ?, inserted = ?, updated = ?, reactivated = ?,
-        archived = ?, deduplicated = ?, message = ?, error = ?, worker_pid = ?, heartbeat_at = ?,
+        archived = ?, deduplicated = ?, message = ?, error = ?, failure_category = ?, worker_pid = ?, heartbeat_at = ?,
         started_at = ?, finished_at = ?
       WHERE id = ?
     `).run(
-      next.operation, next.status, next.source, JSON.stringify(next.keywords), next.pages,
+      next.operation, next.status, next.source, JSON.stringify(next.keywords), next.pages, next.minSalary ?? null, next.maxJobs ?? null,
       next.currentPage, next.totalPages, next.found, next.saved, next.inserted, next.updated,
       next.reactivated, next.archived, next.deduplicated, next.message, next.error ?? null,
-      next.workerPid ?? null, next.heartbeatAt ?? null, next.startedAt ?? null, next.finishedAt ?? null, id
+      next.failureCategory ?? null, next.workerPid ?? null, next.heartbeatAt ?? null, next.startedAt ?? null, next.finishedAt ?? null, id
     );
     return next;
   }
@@ -890,6 +1098,249 @@ export class JobStore {
     return changed;
   }
 
+  listRuns(limit = 50): CrawlRun[] {
+    this.markInterruptedRuns();
+    return (this.db.prepare('SELECT * FROM crawl_runs ORDER BY created_at DESC LIMIT ?').all(Math.max(1, Math.min(limit, 200))) as Array<Record<string, unknown>>)
+      .map((row) => this.rowToRun(row));
+  }
+
+  cancelRun(id: string): CrawlRun {
+    const run = this.getRun(id);
+    if (!run) throw new Error('任务不存在');
+    if (!['queued', 'running'].includes(run.status)) throw new Error('只有等待或运行中的任务可以取消');
+    if (run.workerPid && isProcessAlive(run.workerPid) && run.workerPid !== process.pid) {
+      try { process.kill(run.workerPid, 'SIGTERM'); } catch {}
+    }
+    return this.updateRun(id, { status: 'cancelled', message: '已由用户取消', finishedAt: new Date().toISOString(), workerPid: undefined, heartbeatAt: undefined });
+  }
+
+  listRunFingerprints(runId: string): string[] {
+    return (this.db.prepare('SELECT fingerprint FROM crawl_run_fingerprints WHERE run_id = ?').all(runId) as Array<{ fingerprint: string }>).map((row) => row.fingerprint);
+  }
+
+  recordCrawlPage(input: {
+    page: CrawlRunPage;
+    fingerprints: string[];
+    observations: CrawlJobObservation[];
+  }, withinTransaction = false): void {
+    const { page } = input;
+    if (!withinTransaction) this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(`
+        INSERT INTO crawl_run_pages(run_id, ordinal, keyword, city, page_number, status, raw_count, unique_count,
+          saved, inserted, updated, deduplicated, detail_failed, error_message, committed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(run_id, ordinal) DO UPDATE SET status=excluded.status, raw_count=excluded.raw_count,
+          unique_count=excluded.unique_count, saved=excluded.saved, inserted=excluded.inserted, updated=excluded.updated,
+          deduplicated=excluded.deduplicated, detail_failed=excluded.detail_failed, error_message=excluded.error_message,
+          committed_at=excluded.committed_at
+      `).run(page.runId, page.ordinal, page.keyword, page.city, page.pageNumber, page.status, page.rawCount,
+        page.uniqueCount, page.saved, page.inserted, page.updated, page.deduplicated, page.detailFailed,
+        page.errorMessage ?? null, page.committedAt ?? null);
+      const addFingerprint = this.db.prepare('INSERT OR IGNORE INTO crawl_run_fingerprints(run_id, fingerprint) VALUES (?, ?)');
+      for (const fingerprint of input.fingerprints) addFingerprint.run(page.runId, fingerprint);
+      this.db.prepare('DELETE FROM crawl_job_observations WHERE run_id = ? AND ordinal = ?').run(page.runId, page.ordinal);
+      const addObservation = this.db.prepare(`
+        INSERT INTO crawl_job_observations(run_id, ordinal, job_id, source, platform_job_id, keyword, city,
+          page_number, rank, title, company, url, disposition, detail_status, observed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of input.observations) addObservation.run(item.runId, item.ordinal, item.jobId ?? null, item.source,
+        item.platformJobId ?? null, item.keyword, item.city, item.pageNumber, item.rank, item.title, item.company,
+        item.url, item.disposition, item.detailStatus, item.observedAt);
+      if (!withinTransaction) this.db.exec('COMMIT');
+    } catch (error) {
+      if (!withinTransaction) this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  commitCrawlPage(input: {
+    jobs: ScoredJob[];
+    page: Omit<CrawlRunPage, 'saved' | 'inserted' | 'updated' | 'deduplicated'>;
+    fingerprints: string[];
+    observations: CrawlJobObservation[];
+  }): UpsertStats {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const stats = this.upsertJobsDetailed(input.jobs, true);
+      this.recordCrawlPage({
+        page: {
+          ...input.page,
+          saved: stats.saved,
+          inserted: stats.inserted,
+          updated: stats.updated,
+          deduplicated: stats.deduplicated,
+        },
+        fingerprints: input.fingerprints,
+        observations: input.observations,
+      }, true);
+      this.db.exec('COMMIT');
+      return stats;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  listRunPages(runId: string): CrawlRunPage[] {
+    const rows = this.db.prepare('SELECT * FROM crawl_run_pages WHERE run_id = ? ORDER BY ordinal').all(runId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      runId: String(row.run_id), ordinal: Number(row.ordinal), keyword: String(row.keyword), city: String(row.city),
+      pageNumber: Number(row.page_number), status: row.status as CrawlRunPage['status'], rawCount: Number(row.raw_count),
+      uniqueCount: Number(row.unique_count), saved: Number(row.saved), inserted: Number(row.inserted), updated: Number(row.updated),
+      deduplicated: Number(row.deduplicated), detailFailed: Number(row.detail_failed),
+      errorMessage: row.error_message ? String(row.error_message) : undefined,
+      committedAt: row.committed_at ? String(row.committed_at) : undefined,
+    }));
+  }
+
+  listRunObservations(runId: string): CrawlJobObservation[] {
+    return (this.db.prepare('SELECT * FROM crawl_job_observations WHERE run_id = ? ORDER BY ordinal, rank').all(runId) as Array<Record<string, unknown>>).map((row) => ({
+      runId: String(row.run_id), ordinal: Number(row.ordinal), jobId: row.job_id ? String(row.job_id) : undefined,
+      source: row.source as JobSource, platformJobId: row.platform_job_id ? String(row.platform_job_id) : undefined,
+      keyword: String(row.keyword), city: String(row.city), pageNumber: Number(row.page_number), rank: Number(row.rank),
+      title: String(row.title), company: String(row.company), url: String(row.url),
+      disposition: row.disposition as CrawlJobObservation['disposition'], detailStatus: row.detail_status as CrawlJobObservation['detailStatus'],
+      observedAt: String(row.observed_at),
+    }));
+  }
+
+  recordSourceHealth(health: JobSourceHealth): JobSourceHealth {
+    this.db.prepare(`
+      INSERT INTO source_health_checks(source, status, last_success_at, last_failure_at, last_error, detail_missing_count, checked_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source) DO UPDATE SET status=excluded.status,
+        last_success_at=COALESCE(excluded.last_success_at, source_health_checks.last_success_at),
+        last_failure_at=COALESCE(excluded.last_failure_at, source_health_checks.last_failure_at),
+        last_error=excluded.last_error, detail_missing_count=excluded.detail_missing_count, checked_at=excluded.checked_at
+    `).run(health.source, health.status, health.last_success_at ?? null, health.last_failure_at ?? null,
+      health.last_error ?? null, health.detail_missing_count, health.checked_at);
+    return health;
+  }
+
+  listSourceHealth(): JobSourceHealth[] {
+    const existing = new Map((this.db.prepare('SELECT * FROM source_health_checks').all() as Array<Record<string, unknown>>).map((row) => [String(row.source), row]));
+    return (['boss', 'liepin', 'zhaopin'] as JobSource[]).map((source) => {
+      const row = existing.get(source);
+      return row ? {
+        source, status: row.status as JobSourceHealth['status'], last_success_at: row.last_success_at ? String(row.last_success_at) : undefined,
+        last_failure_at: row.last_failure_at ? String(row.last_failure_at) : undefined,
+        last_error: row.last_error ? String(row.last_error) : undefined, detail_missing_count: Number(row.detail_missing_count), checked_at: String(row.checked_at),
+      } : { source, status: 'unknown', detail_missing_count: 0, checked_at: '' };
+    });
+  }
+
+  listApplicationEvents(jobId: string): ApplicationEvent[] {
+    return (this.db.prepare('SELECT * FROM application_events WHERE job_id = ? ORDER BY occurred_at DESC, created_at DESC').all(jobId) as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id), job_id: String(row.job_id), type: row.type as ApplicationEventType,
+      stage: row.stage ? String(row.stage) : undefined, note: row.note ? String(row.note) : undefined,
+      reason_code: row.reason_code ? String(row.reason_code) : undefined, occurred_at: String(row.occurred_at),
+      idempotency_key: String(row.idempotency_key), created_at: String(row.created_at),
+    }));
+  }
+
+  recordApplicationEvent(input: {
+    jobId: string; type: ApplicationEventType; stage?: string; note?: string; reasonCode?: string;
+    occurredAt?: string; idempotencyKey?: string;
+  }): ApplicationEvent {
+    if (!this.getJob(input.jobId)) throw new Error('岗位不存在');
+    const occurredAt = input.occurredAt ?? new Date().toISOString();
+    const idempotencyKey = input.idempotencyKey ?? `${input.jobId}:${input.type}:${occurredAt}`;
+    const existing = this.db.prepare('SELECT * FROM application_events WHERE idempotency_key = ?').get(idempotencyKey) as Record<string, unknown> | undefined;
+    if (existing) return this.listApplicationEvents(input.jobId).find((item) => item.id === String(existing.id))!;
+    const event: ApplicationEvent = {
+      id: randomUUID(), job_id: input.jobId, type: input.type, stage: input.stage, note: input.note,
+      reason_code: input.reasonCode, occurred_at: occurredAt, idempotency_key: idempotencyKey, created_at: new Date().toISOString(),
+    };
+    this.db.prepare(`INSERT INTO application_events(id, job_id, type, stage, note, reason_code, occurred_at, idempotency_key, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(event.id, event.job_id, event.type, event.stage ?? null, event.note ?? null, event.reason_code ?? null,
+        event.occurred_at, event.idempotency_key, event.created_at);
+    if (input.type === 'applied') this.updateJobContact(input.jobId, { status: 'applied' });
+    if (['interview_scheduled', 'interview_completed'].includes(input.type)) this.updateJobContact(input.jobId, { status: 'interviewing' });
+    if (input.type === 'offer') this.updateJobContact(input.jobId, { outcome: 'offer' });
+    if (input.type === 'accepted') this.updateJobContact(input.jobId, { status: 'closed', outcome: 'accepted' });
+    if (input.type === 'rejected') this.updateJobContact(input.jobId, { status: 'rejected', outcome: 'rejected' });
+    if (input.type === 'withdrawn') this.updateJobContact(input.jobId, { status: 'closed', outcome: 'withdrawn' });
+    if (input.type === 'no_response') this.updateJobContact(input.jobId, { status: 'closed', outcome: 'no_response' });
+    return event;
+  }
+
+  contactFunnel(now = new Date()): ContactFunnelStats {
+    const rows = this.db.prepare('SELECT * FROM job_contacts').all() as unknown as JobContactRow[];
+    const contacts = rows.map(rowToContact);
+    const outcomeCounts: Record<ContactOutcome, number> = { offer: 0, accepted: 0, rejected: 0, withdrawn: 0, no_response: 0 };
+    for (const contact of contacts) if (contact.outcome) outcomeCounts[contact.outcome]++;
+    const stages = {
+      ready_to_apply: contacts.filter((item) => item.status === 'ready_to_apply').length,
+      applied: contacts.filter((item) => Boolean(item.applied_at) || ['applied', 'interviewing'].includes(item.status)).length,
+      interviewing: contacts.filter((item) => Boolean(item.interviewing_at) || item.status === 'interviewing').length,
+      outcome: contacts.filter((item) => Boolean(item.outcome)).length,
+      positive_outcome: outcomeCounts.offer + outcomeCounts.accepted,
+    };
+    return {
+      generated_at: now.toISOString(), stages,
+      due_follow_ups: contacts.filter((item) => item.next_follow_up_at && new Date(item.next_follow_up_at) <= now && !['closed', 'rejected'].includes(item.status)).length,
+      outcomes: outcomeCounts,
+      conversion: {
+        application_to_interview: stages.applied ? stages.interviewing / stages.applied : 0,
+        interview_to_positive_outcome: stages.interviewing ? stages.positive_outcome / stages.interviewing : 0,
+      },
+    };
+  }
+
+  listJobContentVersions(jobId: string): JobContentVersion[] {
+    return (this.db.prepare('SELECT * FROM job_content_versions WHERE job_id = ? ORDER BY created_at DESC').all(jobId) as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id), job_id: String(row.job_id), origin: row.origin as JobContentVersion['origin'], content: String(row.content),
+      content_hash: String(row.content_hash), active: Boolean(row.active), created_at: String(row.created_at),
+    }));
+  }
+
+  addJobContentVersion(jobId: string, content: string, origin: JobContentVersion['origin'], activate = true): JobContentVersion {
+    if (!this.getJob(jobId)) throw new Error('岗位不存在');
+    const normalized = content.trim();
+    if (normalized.length < 80) throw new Error('完整 JD 至少需要 80 个字符');
+    const hash = createHash('sha256').update(normalized).digest('hex');
+    const existing = this.db.prepare('SELECT id FROM job_content_versions WHERE job_id = ? AND content_hash = ?').get(jobId, hash) as { id: string } | undefined;
+    if (existing) return this.listJobContentVersions(jobId).find((item) => item.id === existing.id)!;
+    const version: JobContentVersion = { id: randomUUID(), job_id: jobId, origin, content: normalized, content_hash: hash, active: activate, created_at: new Date().toISOString() };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (activate) this.db.prepare('UPDATE job_content_versions SET active = 0 WHERE job_id = ?').run(jobId);
+      this.db.prepare('INSERT INTO job_content_versions(id, job_id, origin, content, content_hash, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(version.id, jobId, origin, normalized, hash, activate ? 1 : 0, version.created_at);
+      this.db.exec('COMMIT');
+      return version;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  commitJobContentVersion(jobId: string, scored: ScoredJob, content: string, origin: JobContentVersion['origin']): JobContentVersion {
+    if (!this.getJob(jobId)) throw new Error('岗位不存在');
+    const normalized = content.trim();
+    if (normalized.length < 80) throw new Error('完整 JD 至少需要 80 个字符');
+    const hash = createHash('sha256').update(normalized).digest('hex');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.upsertJobsDetailed([scored], true);
+      this.db.prepare('UPDATE job_content_versions SET active = 0 WHERE job_id = ?').run(jobId);
+      const existing = this.db.prepare('SELECT id FROM job_content_versions WHERE job_id = ? AND content_hash = ?')
+        .get(jobId, hash) as { id: string } | undefined;
+      const id = existing?.id ?? randomUUID();
+      if (existing) {
+        this.db.prepare('UPDATE job_content_versions SET active = 1 WHERE id = ?').run(id);
+      } else {
+        this.db.prepare('INSERT INTO job_content_versions(id, job_id, origin, content, content_hash, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)')
+          .run(id, jobId, origin, normalized, hash, new Date().toISOString());
+      }
+      this.db.exec('COMMIT');
+      return this.listJobContentVersions(jobId).find((item) => item.id === id)!;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   private rowToRun(row: Record<string, unknown>): CrawlRun {
     return {
       id: String(row.id),
@@ -898,6 +1349,8 @@ export class JobStore {
       source: (row.source as JobSource | null) ?? null,
       keywords: safeJson(String(row.keywords_json), []),
       pages: Number(row.pages),
+      minSalary: row.min_salary == null ? undefined : Number(row.min_salary),
+      maxJobs: row.max_jobs == null ? undefined : Number(row.max_jobs),
       currentPage: Number(row.current_page),
       totalPages: Number(row.total_pages),
       found: Number(row.found),
@@ -909,6 +1362,7 @@ export class JobStore {
       deduplicated: Number(row.deduplicated ?? 0),
       message: String(row.message),
       error: row.error ? String(row.error) : undefined,
+      failureCategory: row.failure_category ? String(row.failure_category) as CrawlRun['failureCategory'] : undefined,
       workerPid: row.worker_pid ? Number(row.worker_pid) : undefined,
       heartbeatAt: row.heartbeat_at ? String(row.heartbeat_at) : undefined,
       startedAt: row.started_at ? String(row.started_at) : undefined,
@@ -953,7 +1407,7 @@ export class JobStore {
     try {
       for (const row of rows) {
         const existing = safeJson<{ score_version?: number; job_match_score?: number } | null>(row.score_json, null);
-        if (existing?.score_version === 6 && typeof existing.job_match_score === 'number') continue;
+        if (existing?.score_version === 7 && typeof existing.job_match_score === 'number') continue;
         const job = rowToJob(row);
         const score = scoreWithRules(job, null, undefined, this.getCompanyProfile(job.company_key), resume);
         update.run(score.total, score.grade, JSON.stringify(score), row.id);

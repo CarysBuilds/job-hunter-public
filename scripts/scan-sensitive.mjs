@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -23,9 +23,11 @@ const denyContent = [
   /AUTO_GREETING_/,
   /真实发送/,
   /批量打招呼/,
+  /AI\s*商务(?:主线|转型试投|模板)/i,
+  /ai_business_(?:primary|transition)/i,
 ];
 const includeBuild = process.argv.includes('--include-build') || process.env.SCAN_SENSITIVE_INCLUDE_BUILD === '1';
-const alwaysSkipDirs = new Set(['.git', 'node_modules', 'data']);
+const alwaysSkipDirs = new Set(['.git', 'node_modules', 'node-downloads', 'data']);
 const buildSkipDirs = new Set(['dist', 'staging', 'artifacts', 'release']);
 const textExt = new Set(['.ts', '.js', '.mjs', '.json', '.md', '.html', '.css', '.yml', '.yaml', '.txt', '.example', '.iss']);
 
@@ -42,7 +44,8 @@ function walk(dir, files = []) {
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
     const rel = normalizeRel(relative(root, path));
-    const stat = statSync(path);
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) {
       if (!alwaysSkipDirs.has(entry) && (includeBuild || !buildSkipDirs.has(entry))) walk(path, files);
       continue;

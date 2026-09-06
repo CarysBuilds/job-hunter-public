@@ -1,12 +1,13 @@
 # Windows Installation
 
-Job Hunter V1 is packaged for Windows 10/11 x64.
+Job Hunter is packaged for Windows 10/11 x64 and bundles Node.js 24.
 
 ## Install
 
 1. Download `JobHunter-Setup-x64.exe` from GitHub Releases.
-2. Run the installer.
-3. Launch Job Hunter from the Start Menu or desktop shortcut.
+2. Optionally verify it against `JobHunter-Setup-x64.exe.sha256`.
+3. Run the installer.
+4. Launch Job Hunter from the Start Menu or desktop shortcut.
 
 The installer uses per-user locations:
 

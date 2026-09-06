@@ -5,7 +5,7 @@
     custom: { label: '自定义关键词', keywords: [] },
   };
   const DEFAULT_KEYWORDS = ['产品经理'];
-  const state = { jobs: [], lifecycle: 'active', grade: 'all', source: 'all', sort: 'priority-desc', query: '', keywordPreset: 'custom', polling: false, settings: null, profile: null };
+  const state = { jobs: [], todayJobs: [], lifecycle: 'active', grade: 'all', source: 'all', sort: 'priority-desc', query: '', keywordPreset: 'custom', polling: false, settings: null, profile: null, view: 'today' };
   let loadSequence = 0;
   const byId = (id) => document.getElementById(id);
   const elements = {
@@ -17,6 +17,9 @@
     overlay: byId('detail-overlay'), panel: byId('detail-panel'), search: byId('search-input'), sort: byId('sort-select'),
     setupOverlay: byId('setup-overlay'), setupModal: byId('setup-modal'),
     emptyTitle: byId('empty-title'), emptyHint: byId('empty-hint'),
+    todaySummary: byId('today-summary'), todayQueues: byId('today-queues'),
+    profileSummary: byId('profile-summary'), sourceHealth: byId('source-health'), runHistory: byId('run-history'),
+    navTabs: [...document.querySelectorAll('[data-view]')], views: [...document.querySelectorAll('.workspace-view')],
   };
 
   function make(tag, className, text) {
@@ -27,7 +30,11 @@
   }
 
   async function api(path, options) {
-    const response = await fetch(path, options);
+    const request = { ...(options || {}) };
+    if (request.method && !['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase())) {
+      request.headers = { ...(request.headers || {}), 'x-job-hunter-request': '1' };
+    }
+    const response = await fetch(path, request);
     let payload;
     try { payload = await response.json(); } catch { payload = { ok: false, error: `HTTP ${response.status}` }; }
     if (!response.ok || !payload.ok) throw new Error(payload.error || `请求失败 (${response.status})`);
@@ -43,7 +50,7 @@
 
   function showStatus(message, active = false) {
     elements.statusBar.classList.remove('hidden');
-    elements.statusBar.querySelector('.status-dot').style.animationPlayState = active ? 'running' : 'paused';
+    elements.statusBar.querySelector('.status-dot').classList.toggle('paused', !active);
     elements.statusText.textContent = message;
     setBusy(active);
   }
@@ -71,10 +78,101 @@
       state.jobs = jobs;
       renderStats();
       renderJobs();
+      if (state.view === 'today') await loadToday();
     } catch (error) {
       if (sequence !== loadSequence) return;
       showStatus(`加载失败：${error.message}`);
     }
+  }
+
+  function queueCard(title, jobs, hint) {
+    const card = make('section', 'queue-card');
+    const heading = make('div', 'queue-heading');
+    heading.append(make('h3', '', title), make('span', 'queue-count', jobs.length));
+    card.append(heading, make('p', 'muted queue-hint', hint));
+    const list = make('div', 'queue-list');
+    jobs.slice(0, 8).forEach((job) => {
+      const button = make('button', 'queue-job');
+      button.type = 'button';
+      button.append(make('strong', '', job.title), make('span', '', `${job.company} · ${job.score.grade}/${job.score.total}`));
+      button.addEventListener('click', () => showDetail(job));
+      list.append(button);
+    });
+    if (!jobs.length) list.append(make('p', 'muted', '今天没有待处理项'));
+    card.append(list);
+    return card;
+  }
+
+  async function loadToday() {
+    try {
+      const [jobs, funnel] = await Promise.all([
+        api('/api/jobs?lifecycle=active&sort=priority-desc'),
+        api('/api/contact/funnel'),
+      ]);
+      state.todayJobs = jobs;
+      const now = Date.now();
+      const pending = jobs.filter((job) => ['unprocessed', 'drafted'].includes(job.contact?.status || 'unprocessed'));
+      const followUps = jobs.filter((job) => job.contact?.next_follow_up_at && new Date(job.contact.next_follow_up_at).getTime() <= now && !['closed', 'rejected'].includes(job.contact.status));
+      const ready = jobs.filter((job) => job.contact?.status === 'ready_to_apply');
+      const interviewing = jobs.filter((job) => job.contact?.status === 'interviewing');
+      const summaries = [
+        ['待沟通', pending.length], ['到期跟进', funnel.due_follow_ups],
+        ['待投递', funnel.stages.ready_to_apply], ['面试中', funnel.stages.interviewing],
+      ];
+      elements.todaySummary.replaceChildren(...summaries.map(([label, value]) => {
+        const card = make('div', 'stat-card');
+        card.append(make('div', 'stat-label', label), make('div', 'stat-value', value));
+        return card;
+      }));
+      elements.todayQueues.replaceChildren(
+        queueCard('待沟通', pending, '生成草稿、复制后手动发送，再登记已沟通'),
+        queueCard('到期跟进', followUps, '处理已到期的跟进提醒'),
+        queueCard('待投递', ready, '确认材料后在招聘平台手动投递'),
+        queueCard('面试中', interviewing, '补充面试安排与结果事件'),
+      );
+    } catch (error) {
+      showStatus(`今日行动加载失败：${error.message}`);
+    }
+  }
+
+  async function loadProfileSummary() {
+    const [profilePayload, resume] = await Promise.all([api('/api/profile'), api('/api/resume')]);
+    state.profile = profilePayload.profile;
+    const profile = profilePayload.profile;
+    const templateLabel = { general: '通用设置', custom: '自定义' }[profile.strategyTemplate] || profile.strategyTemplate;
+    elements.profileSummary.replaceChildren(
+      make('h3', '', `${templateLabel} · 画像 v${profile.profileVersion}`),
+      make('p', '', `目标方向：${(profile.targetTracks || []).join('、')}`),
+      make('p', '', `经验：${profile.experienceYears} 年 · 薪资底线：${profile.salaryFloorK}K · 期望：${profile.salaryExpectK}K`),
+      make('p', '', `销售风险容忍度：${profile.salesRiskTolerance} · 简历：${resume.content?.trim().length >= 80 ? '已配置' : '未配置'}`),
+      make('p', 'muted', `屏蔽公司 ${(profile.blockedCompanies || []).length} 个 · 屏蔽关键词 ${(profile.blockedKeywords || []).length} 个`),
+    );
+  }
+
+  async function loadMore() {
+    const [health, runs] = await Promise.all([api('/api/sources'), api('/api/runs?limit=10')]);
+    elements.sourceHealth.replaceChildren(...health.map((item) => {
+      const card = make('div', `health-card health-${item.status}`);
+      card.append(make('strong', '', sourceLabels[item.source] || item.source), make('span', '', item.status),
+        make('small', 'muted', item.last_error || `详情缺失 ${item.detail_missing_count}`));
+      return card;
+    }));
+    elements.runHistory.replaceChildren(...runs.map((run) => {
+      const row = make('div', 'run-row');
+      row.append(make('span', '', `${sourceLabels[run.source] || run.operation} · ${run.status}`),
+        make('span', 'muted', run.message), make('time', '', formatDateTime(run.createdAt)));
+      return row;
+    }));
+    if (!runs.length) elements.runHistory.append(make('p', 'muted', '暂无任务记录'));
+  }
+
+  function switchView(view) {
+    state.view = view;
+    elements.navTabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.view === view));
+    elements.views.forEach((panel) => panel.classList.toggle('hidden', panel.id !== `${view}-view`));
+    if (view === 'today') loadToday();
+    if (view === 'profile') loadProfileSummary().catch((error) => showStatus(`资料加载失败：${error.message}`));
+    if (view === 'more') loadMore().catch((error) => showStatus(`诊断加载失败：${error.message}`));
   }
 
   function renderStats() {
@@ -91,14 +189,11 @@
     }));
   }
 
-  function gradeColor(grade) {
-    return { A: '#22c55e', B: '#3b82f6', C: '#f59e0b', D: '#ef4444' }[grade] || '#6b7280';
-  }
-
   const contactLabels = {
     unprocessed: '未处理',
     drafted: '已生成草稿',
     greeted: '已打招呼',
+    ready_to_apply: '待投递',
     applied: '已投递',
     interviewing: '面试中',
     rejected: '已拒绝',
@@ -160,11 +255,9 @@
       gradeCell.append(make('span', `grade-badge grade-${job.score.grade}`, job.score.grade));
       const scoreCell = document.createElement('td');
       scoreCell.append(make('strong', '', job.score.total));
-      const bar = make('div', 'score-bar');
-      const fill = make('div', 'score-bar-fill');
-      fill.style.width = `${job.score.total}%`;
-      fill.style.backgroundColor = gradeColor(job.score.grade);
-      bar.append(fill);
+      const bar = make('progress', `score-bar score-grade-${job.score.grade}`);
+      bar.max = 100;
+      bar.value = job.score.total;
       scoreCell.append(bar);
       const companyScore = make('td', 'company-score-cell', job.score.company_quality_score ?? 70);
       const title = make('td', 'job-title-cell', job.title);
@@ -219,6 +312,8 @@
     const output = make('div', 'greeting-output hidden');
     const copy = make('button', 'btn btn-secondary hidden', '复制文案');
     copy.type = 'button';
+    const register = make('button', 'btn btn-secondary hidden', '登记已沟通');
+    register.type = 'button';
 
     generate.addEventListener('click', async () => {
       generate.disabled = true;
@@ -232,6 +327,7 @@
         output.dataset.copyText = result.text;
         if (result.contact) job.contact = result.contact;
         copy.classList.remove('hidden');
+        register.classList.remove('hidden');
       } catch (error) {
         output.className = 'greeting-output greeting-error';
         output.textContent = error.message;
@@ -250,7 +346,19 @@
         copy.textContent = '复制失败，请手动选择';
       }
     });
-    actions.append(generate, copy);
+    register.addEventListener('click', async () => {
+      register.disabled = true;
+      try {
+        job.contact = await api(`/api/jobs/${encodeURIComponent(job.id)}/contact`, {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'greeted', communication_source: 'manual', communication_verified_at: new Date().toISOString() }),
+        });
+        register.textContent = '已登记';
+        loadToday();
+      } catch (error) { register.textContent = error.message; }
+      finally { register.disabled = false; }
+    });
+    actions.append(generate, copy, register);
     box.append(note, actions, output);
     return section('智能打招呼', box);
   }
@@ -296,22 +404,30 @@
     box.append(make('p', '', `当前状态：${contactLabels[status] || status}`));
     const actions = make('div', 'contact-actions');
     [
-      ['applied', '标为已投递'],
-      ['interviewing', '标为面试中'],
+      ['greeted', '登记已沟通'],
+      ['ready_to_apply', '标为待投递'],
+      ['applied', '标为已投递', 'applied'],
+      ['interviewing', '标为面试中', 'interview_scheduled'],
       ['follow_up', '标为需跟进'],
-      ['rejected', '标为已拒绝'],
+      ['rejected', '标为已拒绝', 'rejected'],
       ['closed', '标为已结束'],
-    ].forEach(([nextStatus, label]) => {
+    ].forEach(([nextStatus, label, eventType]) => {
       const button = make('button', 'btn btn-secondary', label);
       button.type = 'button';
       button.addEventListener('click', async () => {
         button.disabled = true;
         try {
-          job.contact = await api(`/api/jobs/${encodeURIComponent(job.id)}/contact`, {
-            method: 'PATCH',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ status: nextStatus }),
-          });
+          if (eventType) {
+            await api(`/api/jobs/${encodeURIComponent(job.id)}/events`, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ type: eventType, idempotencyKey: `${job.id}:${eventType}:${new Date().toISOString()}` }),
+            });
+            job.contact = (await api(`/api/jobs/${encodeURIComponent(job.id)}`)).contact;
+          } else {
+            job.contact = await api(`/api/jobs/${encodeURIComponent(job.id)}/contact`, {
+              method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: nextStatus }),
+            });
+          }
           showDetail(job);
           loadJobs();
         } catch (error) {
@@ -324,6 +440,57 @@
     });
     box.append(actions);
     return section('沟通状态', box);
+  }
+
+  function eventSection(job) {
+    const box = make('div', 'event-card');
+    const actions = make('div', 'button-row');
+    [
+      ['recruiter_reply', '记录回复'], ['resume_requested', '索取简历'], ['screening', '初筛'],
+      ['assessment', '测评'], ['interview_completed', '完成面试'], ['offer', '收到 Offer'], ['accepted', '接受 Offer'],
+    ].forEach(([type, label]) => {
+      const button = make('button', 'btn btn-secondary', label);
+      button.type = 'button';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api(`/api/jobs/${encodeURIComponent(job.id)}/events`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ type, idempotencyKey: `${job.id}:${type}:${new Date().toISOString()}` }),
+          });
+          button.textContent = '已记录';
+          loadToday();
+        } catch (error) { button.textContent = error.message; }
+        finally { button.disabled = false; }
+      });
+      actions.append(button);
+    });
+    box.append(make('p', 'muted', '事件以追加方式保存，当前状态只是事件的投影。'), actions);
+    return section('申请事件', box);
+  }
+
+  function contentVersionSection(job) {
+    const box = make('div', 'content-version-card');
+    const textarea = make('textarea', 'input resume-input');
+    textarea.rows = 7;
+    textarea.placeholder = '粘贴完整 JD（至少 80 个字符）。评分成功后才会激活，新旧版本都会保留。';
+    const save = make('button', 'btn btn-secondary', '保存并重新评分');
+    save.type = 'button';
+    const status = make('p', 'muted', '');
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try {
+        const result = await api(`/api/jobs/${encodeURIComponent(job.id)}/content-versions`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: textarea.value, origin: 'manual_paste' }),
+        });
+        Object.assign(job, result.job);
+        status.textContent = `已激活版本 ${result.version.content_hash.slice(0, 8)}；相同内容会幂等复用。`;
+      } catch (error) { status.textContent = error.message; }
+      finally { save.disabled = false; }
+    });
+    box.append(textarea, save, status);
+    return section('粘贴完整 JD', box);
   }
 
   function showDetail(job) {
@@ -359,17 +526,30 @@
     const dimensions = [
       ['方向', job.score.dimensions.role_fit, 30], ['能力', job.score.dimensions.capability_fit, 25],
       ['门槛', job.score.dimensions.threshold_fit, 15], ['条件', job.score.dimensions.condition_fit, 15],
-      ['机会', job.score.dimensions.opportunity_quality, 15], ['公司', job.score.dimensions.company_quality ?? job.score.company_quality_score ?? 70, 100],
-      ['风险', job.score.dimensions.risk_penalty, 0],
+      ['JD 质量', job.score.dimensions.opportunity_quality, 15], ['风险扣分', job.score.dimensions.risk_penalty, -30],
     ];
     dimensions.forEach(([label, value, max]) => {
       const item = make('div', 'score-item');
-      item.append(make('div', 'score-label', label), make('span', 'score-num', value), make('span', 'score-max', max ? `/${max}` : ''));
+      item.append(make('div', 'score-label', label), make('span', 'score-num', value), make('span', 'score-max', max > 0 ? `/${max}` : '（最低 -30）'));
       breakdown.append(item);
     });
-    panel.append(section(`综合评分 ${job.score.total} · 岗位 ${job.score.job_match_score ?? job.score.total} · 公司 ${job.score.company_quality_score ?? 70}`, breakdown));
+    panel.append(section(`最终分 ${job.score.total} · 面试匹配 ${job.score.interview_fit_score ?? job.score.total} · 公司质量 ${job.score.company_quality_score ?? 70}`, breakdown));
+    if (job.score.grade_cap_reasons?.length) {
+      panel.append(section('评级封顶原因', flagList(job.score.grade_cap_reasons, false)));
+    }
+    if (job.score.requirement_checks?.length) {
+      const checks = make('div', 'requirement-checks');
+      job.score.requirement_checks.forEach((check) => {
+        const row = make('div', `requirement-row requirement-${check.status}`);
+        row.append(make('strong', '', check.label), make('span', '', `${check.status} · ${check.points}/${check.maximum}`),
+          make('small', 'muted', check.candidate_evidence || '暂无候选人证据'));
+        checks.append(row);
+      });
+      panel.append(section('结构化门槛核验', checks));
+    }
     panel.append(companyProfileSection(job));
     panel.append(contactSection(job));
+    panel.append(eventSection(job));
     const resumeMissingForMatch = job.score.insufficient_evidence.includes('需上传简历后进行能力匹配');
     panel.append(section('匹配能力', resumeMissingForMatch
       ? make('p', 'greeting-error', '需上传简历后进行能力匹配；上传后请点击“重新评分”。')
@@ -383,6 +563,7 @@
     job.score.evidence.forEach((item) => evidence.append(make('p', '', `【${item.category}】${item.text}`)));
     panel.append(section('评分依据', evidence));
     panel.append(greetingSection(job));
+    panel.append(contentVersionSection(job));
     panel.append(section('岗位描述', make('div', 'jd-text', job.jd_fulltext || '未抓取到岗位详情')));
     if (/^https?:\/\//i.test(job.url)) {
       const link = make('a', 'detail-link', '打开原始岗位 ↗');
@@ -451,8 +632,8 @@
   }
 
   async function openSetup() {
-    const [config, profilePayload, resumePayload, setupStatus] = await Promise.all([
-      api('/api/config'), api('/api/profile'), api('/api/resume'), api('/api/setup/status'),
+    const [config, profilePayload, resumePayload] = await Promise.all([
+      api('/api/config'), api('/api/profile'), api('/api/resume'),
     ]);
     const settings = config.settings;
     const profile = profilePayload.profile;
@@ -468,7 +649,7 @@
     header.append(
       make('h2', '', '初始设置'),
       make('p', 'muted', '关键词决定平台实际搜索什么岗位；目标方向只影响抓取结果的匹配评分，两者不重复。所有内容仅保存在本机。'),
-      make('p', 'local-data-path', `本地数据目录：${setupStatus.dataDir}`),
+      make('p', 'local-data-path', `当前设置：${{ general: '通用设置', custom: '自定义' }[profile.strategyTemplate] || profile.strategyTemplate} · 画像 v${profile.profileVersion}`),
     );
     modal.append(close, header);
 
@@ -477,6 +658,10 @@
     tracks.append(
       make('span', '', '目标方向'),
       setupTrack('product', '产品'),
+      setupTrack('ai_application', 'AI 应用'),
+      setupTrack('ai_solutions', 'AI 解决方案'),
+      setupTrack('ai_product', 'AI 产品'),
+      setupTrack('ai_customer_success', 'AI 客户成功'),
       setupTrack('engineering', '技术/研发'),
       setupTrack('operations', '运营/增长'),
       setupTrack('design', '设计/创意'),
@@ -499,6 +684,11 @@
       setupInput('最低月薪 K', 'salaryFloorK', profile.salaryFloorK ?? 0, { type: 'number', min: 0, max: 300 }),
       setupInput('期望月薪 K', 'salaryExpectK', profile.salaryExpectK ?? 0, { type: 'number', min: 0, max: 500 }),
       setupInput('偏好城市', 'cities', Object.keys(profile.locationScore || {}).join(',')),
+      setupSelect('销售风险容忍度', 'salesRiskTolerance', [
+        ['avoid', '规避销售目标'], ['balanced', '平衡判断'], ['accept', '可接受销售目标'],
+      ]),
+      setupInput('屏蔽公司（逗号分隔）', 'blockedCompanies', (profile.blockedCompanies || []).join(',')),
+      setupInput('屏蔽关键词（逗号分隔）', 'blockedKeywords', (profile.blockedKeywords || []).join(',')),
       tracks,
       setupInput('模型 API Base', 'llmBaseURL', settings.llm?.baseURL || ''),
       setupInput('模型名称', 'llmModel', settings.llm?.model || ''),
@@ -517,6 +707,7 @@
     resumeLabel.append(resume);
     form.append(resumeLabel);
     form.querySelector('[name="careerStage"]').value = profile.careerStage || 'experienced';
+    form.querySelector('[name="salesRiskTolerance"]').value = profile.salesRiskTolerance || 'balanced';
     (profile.targetTracks || []).forEach((track) => {
       const checkbox = form.querySelector(`input[name="targetTracks"][value="${track}"]`);
       if (checkbox) checkbox.checked = true;
@@ -538,6 +729,8 @@
       const cities = String(data.get('cities') || '').split(',').map((item) => item.trim()).filter(Boolean);
       const locationScore = Object.fromEntries(cities.map((city) => [city, 5]));
       const targetTracks = selectedTracksFromForm(form);
+      const blockedCompanies = String(data.get('blockedCompanies') || '').split(/[,，]/).map((item) => item.trim()).filter(Boolean);
+      const blockedKeywords = String(data.get('blockedKeywords') || '').split(/[,，]/).map((item) => item.trim()).filter(Boolean);
       try {
         await api('/api/config', {
           method: 'PUT',
@@ -558,12 +751,16 @@
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
+            expectedProfileVersion: profile.profileVersion,
             careerStage: data.get('careerStage'),
             targetTracks: targetTracks.length ? targetTracks : ['product'],
             experienceYears: Number(data.get('experienceYears') || 0),
             salaryFloorK: Number(data.get('salaryFloorK') || 0),
             salaryExpectK: Number(data.get('salaryExpectK') || 0),
             locationScore,
+            salesRiskTolerance: data.get('salesRiskTolerance'),
+            blockedCompanies,
+            blockedKeywords,
           }),
         });
         const resumeContent = String(data.get('resume') || '').trim();
@@ -685,6 +882,29 @@
     button.addEventListener('click', () => startCrawl(button.dataset.crawlSource));
   });
   elements.rescore.addEventListener('click', startRescore);
+  elements.navTabs.forEach((tab) => tab.addEventListener('click', () => switchView(tab.dataset.view)));
+  byId('btn-today-refresh').addEventListener('click', loadToday);
+  byId('btn-profile-edit').addEventListener('click', () => openSetup().catch((error) => showStatus(`设置加载失败：${error.message}`)));
+  document.querySelectorAll('[data-export]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const [dataset, format] = button.dataset.export.split(':');
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/exports/${dataset}`, {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-job-hunter-request': '1' },
+          body: JSON.stringify({ format }),
+        });
+        if (!response.ok) throw new Error(`导出失败 (${response.status})`);
+        const blob = await response.blob();
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `job-hunter-${dataset}.${format}`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      } catch (error) { showStatus(error.message); }
+      finally { button.disabled = false; }
+    });
+  });
   elements.overlay.addEventListener('click', (event) => { if (event.target === elements.overlay) closeDetail(); });
   elements.setupOverlay.addEventListener('click', (event) => { if (event.target === elements.setupOverlay) closeSetup(); });
   document.addEventListener('keydown', (event) => {
@@ -700,5 +920,6 @@
     .then((status) => { if (!status.configured) return openSetup(); })
     .catch((error) => showStatus(`设置状态检查失败：${error.message}`));
   loadJobs();
+  loadToday();
   pollStatus({ restore: true });
 })();

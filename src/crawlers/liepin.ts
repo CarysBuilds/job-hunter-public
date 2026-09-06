@@ -228,9 +228,20 @@ export class LiepinCrawler extends BaseCrawler {
     const fetchDetails = this.shouldFetchDetails();
     for (const summary of summaries) {
       let jd = this.summaryText(summary);
-      if (fetchDetails && summary.url) {
+      const preliminary: RawJob = { ...summary, source: this.source, jd_fulltext: jd };
+      if (this.isKnownJob(preliminary)) {
+        jobs.push({ ...preliminary, crawl_observation: { detailStatus: 'missing', duplicateHint: true } });
+        continue;
+      }
+      const stored = this.reusableStoredDetail(preliminary);
+      let detailStatus: NonNullable<RawJob['crawl_observation']>['detailStatus'] = 'list_fallback';
+      if (stored) {
+        jd = stored;
+        detailStatus = 'reused';
+      } else if (fetchDetails && summary.url) {
         try {
           jd = await this.session.navigateAndExtractText(summary.url, DETAIL_SELECTORS, 20_000) || jd;
+          detailStatus = jd.replace(/\s+/g, '').length >= 80 ? 'full' : 'list_fallback';
           await this.randomDelay();
         } catch (error) {
           if (isExpiredJobError(error)) {
@@ -246,6 +257,7 @@ export class LiepinCrawler extends BaseCrawler {
         jd_fulltext: jd,
         experience: inferExperience(summary.tags),
         education: inferEducation(summary.tags),
+        crawl_observation: { detailStatus },
       });
     }
     return jobs;

@@ -1,0 +1,11 @@
+[
+  {"name":"AI 产品规划","title":"AI产品经理","company":"匿名甲","jd":"负责大模型产品规划、需求分析、客户访谈、PRD、Agent 工作流设计、项目交付和上线复盘。任职要求本科，3年以上经验。","track":"ai_product","grades":["A","B"],"risk":"none"},
+  {"name":"AI 解决方案","title":"AI解决方案顾问","company":"匿名乙","jd":"负责企业客户大模型需求调研、RAG 解决方案设计、PoC 演示、客户培训、实施交付和项目复盘，不承担销售业绩指标。任职要求本科，3年以上经验。","track":"ai_solutions","grades":["A","B"],"risk":"none"},
+  {"name":"虚假高薪快速开单","title":"AI高薪顾问","company":"匿名丙","jd":"月薪80K上不封顶，三天上手快速开单，无需外出，只需电话和微信洽谈促成成交。任职要求本科，经验不限。","track":"other","grades":["D"],"risk":"soft"},
+  {"name":"发展团队管道收入","title":"团队发展顾问","company":"匿名丁","jd":"发展团队即可获得管道收入和被动收益，负责组建团队并持续扩大团队规模。经验不限，学历不限。","track":"other","grades":["D"],"risk":"none"},
+  {"name":"硬销售风险","title":"AI产品销售经理","company":"匿名戊","jd":"负责陌拜、电销、独立获客和季度销售KPI，要求自带客户资源并完成签单回款。任职要求本科，3年以上经验。","track":"pure_sales","grades":["C","D"],"risk":"hard"},
+  {"name":"外包只提示","title":"产品经理","company":"匿名己","jd":"负责产品规划、需求分析、PRD、客户访谈和项目交付。该岗位为外包驻场，任职要求本科，3年以上经验。","track":"product","grades":["A","B","C"],"risk":"none"},
+  {"name":"大小周只提示","title":"产品经理","company":"匿名庚","jd":"负责产品规划、需求分析、PRD、客户访谈和项目交付，工作时间大小周。任职要求本科，3年以上经验。","track":"product","grades":["A","B","C"],"risk":"none"},
+  {"name":"双向字符不能绕过风险","title":"高薪顾问","company":"匿名辛","jd":"月薪80K上不封顶，\u202e三天上手快速开单，无需外出，电话和微信洽谈促成成交。任职要求本科，经验不限。","track":"other","grades":["D"],"risk":"soft"},
+  {"name":"屏蔽关键词","title":"产品经理","company":"匿名壬","jd":"负责产品规划、需求分析和项目交付，包含禁止测试词。任职要求本科，3年以上经验。","track":"product","grades":["D"],"risk":"none","blockedKeyword":"禁止测试词"}
+]

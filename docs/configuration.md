@@ -4,7 +4,7 @@ Most configuration is available from the web setup screen.
 
 Advanced environment variables can be placed in `.env` during development:
 
-- `PORT`
+- `PORT` (defaults to `17321`)
 - `APP_HOST` (defaults to `127.0.0.1`; only `127.0.0.1`, `localhost`, and `::1` are accepted)
 - `APP_DATA_DIR`
 - `LLM_ENABLED`
@@ -16,9 +16,17 @@ Advanced environment variables can be placed in `.env` during development:
 - `BOSS_CDP_PORT`
 - `LIEPIN_CDP_PORT`
 - `ZHAOPIN_CDP_PORT`
+- `BOSS_ADAPTIVE_MIN_UNIQUE` (defaults to `2`; from page two onward BOSS stops a keyword/city when fewer unique jobs are found)
 
 Runtime files:
 
 - `settings.json`: platform, city, keywords, LLM settings.
 - `profile/profile.json`: candidate profile and scoring preferences.
 - `profile/resume.md`: resume text used for local/API-assisted job capability matching and greeting draft generation.
+- `backups/`: verified pre-migration, pre-delete, manual, and pre-restore SQLite backups.
+
+Database commands:
+
+- `npm run db:status`
+- `npm run db:backup`
+- `npm run db:restore -- --from <backup.sqlite> --confirm "RESTORE job-hunter.sqlite"` (service must be stopped)

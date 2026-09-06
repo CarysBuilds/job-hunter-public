@@ -68,13 +68,13 @@ describe('前端生命周期烟测', () => {
     const payload = '"><svg onload=x=1>';
     const configResponse = await fetch(`${origin}/api/config`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-job-hunter-request': '1' },
       body: JSON.stringify({ cityCode: '101010100', keywords: [payload], setupCompleted: true }),
     });
     assert.equal(configResponse.status, 200);
     const profileResponse = await fetch(`${origin}/api/profile`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-job-hunter-request': '1' },
       body: JSON.stringify({
         careerStage: 'experienced',
         targetTracks: ['ai_solutions'],
@@ -93,7 +93,7 @@ describe('前端生命周期烟测', () => {
     assert.equal(await page.evaluate(() => (window as unknown as { x: number }).x), 0);
     assert.equal(await page.locator('input[name="keywords"]').inputValue(), payload);
     assert.equal(await page.locator('input[name="crawlCities"]').inputValue(), '北京');
-    assert.match(await page.locator('.local-data-path').innerText(), /本地数据目录：/);
+    assert.match(await page.locator('.local-data-path').innerText(), /当前设置：/);
     assert.equal(await page.locator('input[name="cities"]').inputValue(), payload);
     await page.close();
   });
@@ -109,6 +109,7 @@ describe('前端生命周期烟测', () => {
       await page.locator('#setup-overlay .modal-close').click();
     }
     assert.equal(await page.locator('#status-bar').evaluate((node) => node.classList.contains('hidden')), true);
+    await page.locator('[data-view="jobs"]').click();
     assert.equal(await page.locator('#job-tbody tr').count(), 1);
     assert.match(await page.locator('#job-tbody').innerText(), /当前 Agent 岗位/);
 
@@ -151,7 +152,7 @@ describe('前端生命周期烟测', () => {
     await page.locator('#crawl-keyword-preset button[data-value="custom"]').click();
     await page.locator('[data-crawl-source="boss"]').click();
     const capturedCrawl = await crawlRequest;
-    assert.deepEqual((capturedCrawl.postDataJSON() as { keywords?: string[] }).keywords, ['\"><svg onload=x=1>']);
+    assert.deepEqual((capturedCrawl.postDataJSON() as { keywords?: string[] }).keywords, ['"><svg onload=x=1>']);
     await page.unroute('**/api/crawl');
     await page.unroute(/\/api\/login\/status(?:\?|$)/);
     await page.waitForFunction(() => !(document.querySelector('[data-crawl-source="boss"]') as HTMLButtonElement | null)?.disabled);

@@ -5,6 +5,7 @@ import type {
   JobScore,
   JobTrack,
   RawJob,
+  RequirementCheck,
   SalaryRange,
   ScoreEvidence,
   SemanticAnalysis,
@@ -13,7 +14,12 @@ import { getCandidateProfile } from './profile.js';
 import { CAPABILITY_GROUPS } from './capability-dictionary.js';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, ' ');
+const normalize = (value: string) => value
+  .normalize('NFKC')
+  .toLocaleLowerCase('zh-CN')
+  .replace(/[\u200B-\u200D\uFEFF\u202A-\u202E\u2060-\u206F]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim();
 const hasAny = (text: string, values: string[]) => values.some((value) => text.includes(value.toLowerCase()));
 
 const SOLUTION_KEYWORDS = ['解决方案', '售前', '技术顾问', '咨询顾问', '方案架构', '方案设计', '交付', '实施', 'poc', 'demo', '演示', '投标'];
@@ -77,11 +83,19 @@ function classifyTrack(job: RawJob, semantic?: SemanticAnalysis | null): JobTrac
   const solution = hasAny(text, SOLUTION_KEYWORDS);
   const product = hasAny(text, PRODUCT_KEYWORDS);
   const customerSuccess = hasAny(text, CUSTOMER_SUCCESS_KEYWORDS);
+  const titleSolution = hasAny(title, SOLUTION_KEYWORDS);
+  const titleProduct = hasAny(title, PRODUCT_KEYWORDS);
+  const titleCustomerSuccess = hasAny(title, CUSTOMER_SUCCESS_KEYWORDS);
   const sales = hasAny(title, SALES_KEYWORDS);
   const application = hasAny(text, ['agent', '智能体', 'rag', '大模型应用', 'ai应用', 'llm应用'])
     || (hasAi && hasAny(title, ENGINEERING_TITLE_KEYWORDS));
   if (algorithm && !application) return 'algorithm_research';
+  if (/销售运营|销售效能|销售管理|商务运营|客户运营/.test(title)) return 'operations';
+  if (/hrbp|招聘|课程讲师|短视频|带货|直播运营/.test(title)) return 'other';
   if (sales && !solution && !customerSuccess) return 'pure_sales';
+  if (titleProduct && hasAi) return 'ai_product';
+  if (titleCustomerSuccess && hasAi) return 'ai_customer_success';
+  if (titleSolution && hasAi) return 'ai_solutions';
   if (product && hasAi) return 'ai_product';
   if (customerSuccess && hasAi) return 'ai_customer_success';
   if (solution && hasAi) return 'ai_solutions';
@@ -373,7 +387,8 @@ function scoreRisks(
   track: JobTrack,
   semantic: SemanticAnalysis | null | undefined,
   concreteAi: number,
-  salesIsTarget: boolean
+  salesIsTarget: boolean,
+  salesRiskTolerance: CandidateProfile['salesRiskTolerance']
 ) {
   const text = normalize(`${job.title} ${job.jd_fulltext}`);
   const redFlags = new Set<string>();
@@ -390,10 +405,14 @@ function scoreRisks(
   const quotaText = text.replace(/(?:不承担|无需|没有|无)(?:任何)?(?:销售)?(?:业绩)?(?:指标|kpi)/g, '');
   const hasSalesQuota = /销售指标|业绩指标|销售kpi|获客|自带客户|客户资源|业绩目标|签单|回款|成交|销售额|提成|商务谈判|客户开拓|市场拓展|商机转化/.test(quotaText)
     || Boolean(semantic?.has_sales_quota && !negatedQuota);
-  const hasSalesQuotaMismatch = hasSalesQuota && track !== 'pure_sales' && !salesIsTarget;
-  if (hasSalesQuotaMismatch) {
-    penalty -= 10;
-    redFlags.add('岗位包含销售指标，但未归类为销售目标方向');
+  const hardSalesRisk = /陌拜|电销|地推|扫楼|自带.{0,8}(?:客户|资源)|纯佣金|无底薪|独立获客/i.test(quotaText);
+  const hasSalesQuotaMismatch = hasSalesQuota && (!salesIsTarget || salesRiskTolerance === 'avoid');
+  if (hardSalesRisk) {
+    penalty -= salesRiskTolerance === 'accept' && salesIsTarget ? 4 : 10;
+    redFlags.add('要求陌拜、电销、自带资源、纯佣金或独立获客');
+  } else if (hasSalesQuotaMismatch) {
+    penalty -= salesRiskTolerance === 'balanced' ? 6 : 10;
+    redFlags.add('岗位包含销售指标，但与当前方向或风险偏好不完全一致');
   }
   const domains = ['前端', '后端', '运维', '测试', '产品', '运营', '设计', '销售'];
   const domainHits = domains.filter((domain) => text.includes(domain));
@@ -415,7 +434,19 @@ function scoreRisks(
     redFlags: [...redFlags],
     greenFlags: [...greenFlags],
     hasSalesQuota: hasSalesQuotaMismatch,
+    salesRiskLevel: hardSalesRisk ? 'hard' as const : hasSalesQuota ? 'soft' as const : 'none' as const,
   };
+}
+
+function suspectedRecruitmentFraud(text: string): boolean {
+  const normalized = normalize(text);
+  const teamIncome = /(?:发展|组建).{0,10}团队.{0,24}(?:管道收入|被动收入|团队收益)|(?:管道收入|被动收入|团队收益).{0,24}(?:发展|组建).{0,10}团队/i.test(normalized);
+  if (teamIncome) return true;
+  const highIncome = /(?:[3-9]\d|[1-9]\d{2,})\s*(?:k|千).{0,20}(?:上不封顶|轻松月入|月入)/i.test(normalized);
+  const quickClose = /(?:3天|三天|1周|一周).{0,14}(?:上手|开单)|\d{1,3}%\s*开单/i.test(normalized);
+  const deskSales = /(?:电话|微信).{0,20}(?:洽谈|促成.{0,8}(?:合作|成交)|开单|成交)/i.test(normalized)
+    && /无需外出|办公室办公/i.test(normalized);
+  return highIncome && quickClose && deskSales;
 }
 
 function gradeFor(
@@ -426,8 +457,8 @@ function gradeFor(
   hasSalesQuota: boolean,
   lacksJdAiEvidence: boolean
 ): Grade {
-  if (headhunter) return 'C';
   let grade: Grade = total >= 80 ? 'A' : total >= 65 ? 'B' : total >= 45 ? 'C' : 'D';
+  if (headhunter && (grade === 'A' || grade === 'B')) grade = 'C';
   if (lacksJdAiEvidence && (grade === 'A' || grade === 'B')) grade = 'C';
   if ((lowSalary || nonFullTime) && (grade === 'A' || grade === 'B')) grade = 'C';
   if (hasSalesQuota && (grade === 'A' || grade === 'B')) grade = 'C';
@@ -447,17 +478,32 @@ export function scoreWithRules(
   const threshold = scoreThreshold(job, profile, resume);
   const condition = scoreConditions(job, profile);
   const quality = scoreQuality(job);
-  const risk = scoreRisks(job, track, semantic, quality.concreteAi, targetMatchesTrack(profile.targetTracks, 'pure_sales'));
+  const risk = scoreRisks(job, track, semantic, quality.concreteAi, targetMatchesTrack(profile.targetTracks, 'pure_sales'), profile.salesRiskTolerance);
+  const text = normalize(`${job.title} ${job.company} ${job.jd_fulltext}`);
+  const fraud = suspectedRecruitmentFraud(text);
+  const blockedCompany = profile.blockedCompanies.some((value) => normalize(job.company).includes(normalize(value)));
+  const blockedKeyword = profile.blockedKeywords.some((value) => text.includes(normalize(value)));
+  if (fraud) {
+    risk.penalty = Math.max(-30, risk.penalty - 20);
+    risk.redFlags.push('疑似拉人头或虚假高薪招聘：快速开单、发展团队或管道收入组合');
+  }
+  if (blockedCompany || blockedKeyword) risk.redFlags.push('命中用户画像屏蔽规则');
   const positive = role.score + capability.score + threshold.score + condition.score + quality.score;
   const jobMatchScore = clamp(positive + risk.penalty, 0, 100);
-  const companyQualityScore = 70;
-  const total = clamp(Math.round(jobMatchScore * 0.7 + companyQualityScore * 0.3), 0, 100);
+  const companyQualityScore = companyProfile?.quality_score ?? 70;
+  const total = jobMatchScore;
   const lowSalary = Boolean(condition.salary && condition.salary.maxK < profile.salaryFloorK);
   const headhunter = isHeadhunterJob(job);
   const aiTracks: JobTrack[] = ['ai_application', 'ai_solutions', 'ai_product', 'ai_customer_success', 'algorithm_research'];
   const lacksJdAiEvidence = aiTracks.includes(track) && !hasExplicitAiEvidence(normalize(job.jd_fulltext));
   const earlyCareer = profile.careerStage === 'internship' || profile.careerStage === 'new_grad';
-  const grade = gradeFor(total, lowSalary, threshold.nonFullTime && !earlyCareer, headhunter, risk.hasSalesQuota, lacksJdAiEvidence);
+  let grade = gradeFor(total, lowSalary, threshold.nonFullTime && !earlyCareer, headhunter, risk.hasSalesQuota, lacksJdAiEvidence);
+  const gradeCapReasons: string[] = [];
+  if (fraud) { grade = 'D'; gradeCapReasons.push('疑似拉人头或虚假高薪招聘，不进入投递池'); }
+  if (blockedCompany || blockedKeyword) { grade = 'D'; gradeCapReasons.push('命中用户画像屏蔽规则'); }
+  if (headhunter) gradeCapReasons.push('猎头发布的岗位统一最高 C');
+  if (risk.hasSalesQuota) gradeCapReasons.push('销售风险与当前画像不匹配，最高 C');
+  if (lacksJdAiEvidence) gradeCapReasons.push('AI 岗位缺少明确 AI 工作证据，最高 C');
   const insufficient = [...capability.insufficient, ...threshold.insufficient, ...condition.insufficient];
   if (!companyProfile || companyProfile.confidence === 0) insufficient.push('公司公开画像不足，按中性公司分计算');
   const companyGreenFlags = companyProfile?.green_flags ?? [];
@@ -474,7 +520,7 @@ export function scoreWithRules(
     }] : []),
     ...(companyProfile ? [{
       category: 'company' as const,
-      text: `公司信号暂按中性分 ${companyQualityScore} 计算：${companyProfile.reputation_summary}`,
+      text: `公司质量独立展示为 ${companyQualityScore} 分，不计入岗位最终分：${companyProfile.reputation_summary}`,
     }] : []),
     ...companyRedFlags.map((text) => ({ category: 'company' as const, text })),
     ...risk.redFlags.map((text) => ({ category: 'risk' as const, text })),
@@ -503,8 +549,28 @@ export function scoreWithRules(
     : '未上传简历，能力未评分';
   const baseSummary = `${semantic?.summary || `${trackLabel[track]}方向`}；岗位分 ${jobMatchScore}；公司分 ${companyQualityScore}；${capabilitySummary}${risk.redFlags.length + companyRedFlags.length ? `；${risk.redFlags.length + companyRedFlags.length} 项风险` : ''}${aiEvidenceSuffix}`;
   const summary = headhunter ? `${baseSummary}；猎头发布，归入 C 级` : baseSummary;
+  const requestedExperience = parseExperience(job);
+  const requirementChecks: RequirementCheck[] = [
+    {
+      label: '工作经验',
+      jd_requirement: requestedExperience ? `${requestedExperience[0]} 年起` : 'JD 未明确',
+      candidate_evidence: `${profile.experienceYears} 年`,
+      status: requestedExperience ? (profile.experienceYears >= requestedExperience[0] ? 'met' : 'unmet') : 'unknown',
+      points: threshold.score,
+      maximum: 15,
+    },
+    {
+      label: '学历',
+      jd_requirement: job.education || 'JD 未明确',
+      candidate_evidence: profile.education || '未配置',
+      status: job.education && profile.education && profile.education !== '未配置' ? 'met' : 'unknown',
+      points: 0,
+      maximum: 0,
+    },
+  ];
   return {
     total,
+    interview_fit_score: total,
     job_match_score: jobMatchScore,
     company_quality_score: companyQualityScore,
     grade,
@@ -525,7 +591,10 @@ export function scoreWithRules(
     green_flags: [...risk.greenFlags, ...companyGreenFlags],
     evidence,
     summary,
-    score_version: 6,
+    requirement_checks: requirementChecks,
+    grade_cap_reasons: gradeCapReasons,
+    sales_risk_level: risk.salesRiskLevel,
+    score_version: 7,
     scoring_mode: semantic ? 'rules+llm' : 'rules',
   };
 }
