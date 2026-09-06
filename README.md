@@ -15,6 +15,8 @@ Job Hunter 是一个在本机运行的求职助手，可以从 BOSS 直聘、猎
 
 页面中的 `Source code (zip)` 和 `Source code (tar.gz)` 是供开发者使用的源码包，普通用户无需下载。
 
+安装并启动 Job Hunter 后，操作界面通常会在默认浏览器中自动打开。如果没有自动打开，请保持 Job Hunter 正在运行，并访问 [http://127.0.0.1:17321](http://127.0.0.1:17321)。这个地址只在当前电脑本机可用。
+
 Windows 可能因为安装包尚未获得商业代码签名而显示“Windows 已保护你的电脑”或其他安全提醒。这不代表程序一定有问题。请确认安装包来自本项目的 GitHub Releases 页面，然后点击“更多信息”→“仍要运行”继续安装。如果安装包来自网盘、群聊或其他不明来源，请不要直接运行。
 
 macOS 安装包目前尚未经过 Apple 公证。首次打开若提示无法验证开发者，请确认文件来自本项目的 GitHub Releases 页面，然后在 Finder 中右键 `Job Hunter` 并选择“打开”。详细步骤见 [macOS 安装说明](docs/macos-install.md)。Windows 的详细步骤见 [Windows 安装说明](docs/windows-install.md)。
