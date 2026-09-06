@@ -32,7 +32,8 @@ async function waitForHealth(port) {
       const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
         signal: AbortSignal.timeout(1_000),
       });
-      if (response.ok) return response.json();
+      const body = await response.json();
+      if (response.ok && body?.ok && body?.data) return body.data;
     } catch (error) {
       lastError = error;
     }
