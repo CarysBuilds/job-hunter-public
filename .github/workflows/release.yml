@@ -24,6 +24,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npx --no-install playwright install chromium
       - run: npm run check
       - run: npm run package:windows
       - run: npm run scan:sensitive -- --include-build
@@ -67,6 +68,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npx --no-install playwright install chromium
       - run: npm run check
       - run: npm run package:macos
       - run: npm run smoke:macos
