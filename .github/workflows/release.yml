@@ -48,7 +48,8 @@ jobs:
         run: |
           $path = "artifacts/windows/JobHunter-Setup-x64.exe"
           $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
-          "$hash  JobHunter-Setup-x64.exe" | Set-Content -Encoding ascii "$path.sha256"
+          $checksumPath = "$path.sha256"
+          [IO.File]::WriteAllText($checksumPath, "$hash  JobHunter-Setup-x64.exe`n", [Text.Encoding]::ASCII)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: JobHunter-Setup-x64
