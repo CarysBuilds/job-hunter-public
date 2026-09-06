@@ -6,29 +6,18 @@ Job Hunter 是一个在本机运行的求职助手，可以从 BOSS 直聘、猎
 
 ## 下载与安装
 
-### 普通用户
+使用前请先安装 [Google Chrome](https://www.google.com/chrome/)。Job Hunter 会打开独立的 Chrome 窗口供你登录招聘平台和抓取岗位，不会使用你平时的 Chrome 登录状态。
 
-请在 GitHub Releases 页面按电脑系统选择文件，两个安装包的名称已经明确区分：
+前往 [GitHub Releases](https://github.com/CarysBuilds/job-hunter-public/releases/latest)，按电脑系统下载对应的安装包：
 
 - Windows 10/11 x64：下载 `JobHunter-Setup-x64.exe`，双击安装后从桌面或开始菜单打开。
-- macOS（Apple 芯片与 Intel 通用）：下载 `JobHunter-macOS-Universal-v<版本>.dmg`，打开后把 `Job Hunter` 拖入 `Applications`。
+- macOS（Apple 芯片与 Intel 通用）：下载 `JobHunter-macOS-Universal-v0.2.0.dmg`，打开后把 `Job Hunter` 拖入“应用程序”。
+
+页面中的 `Source code (zip)` 和 `Source code (tar.gz)` 是供开发者使用的源码包，普通用户无需下载。
 
 Windows 可能因为安装包尚未获得商业代码签名而显示“Windows 已保护你的电脑”或其他安全提醒。这不代表程序一定有问题。请确认安装包来自本项目的 GitHub Releases 页面，然后点击“更多信息”→“仍要运行”继续安装。如果安装包来自网盘、群聊或其他不明来源，请不要直接运行。
 
-macOS 安装包目前采用本地签名，尚未经过 Apple 公证。首次打开若提示无法验证开发者，请确认文件来自本项目的 GitHub Releases 页面，然后在 Finder 中右键 `Job Hunter` 并选择“打开”。详细步骤见 [macOS 安装说明](docs/macos-install.md)。
-
-### 熟悉开发的用户
-
-可以直接查看源代码，并在本地安装、测试和运行：
-
-```bash
-nvm use
-npm ci --ignore-scripts
-npm run check
-npm run dev
-```
-
-项目要求 Node 24.x；Node 22 或其他主版本会在检查和打包开始时直接失败。然后打开 <http://127.0.0.1:17321>。
+macOS 安装包目前尚未经过 Apple 公证。首次打开若提示无法验证开发者，请确认文件来自本项目的 GitHub Releases 页面，然后在 Finder 中右键 `Job Hunter` 并选择“打开”。详细步骤见 [macOS 安装说明](docs/macos-install.md)。Windows 的详细步骤见 [Windows 安装说明](docs/windows-install.md)。
 
 ## 工作台
 
@@ -45,7 +34,7 @@ npm run dev
 - 目标方向：用于判断抓取到的岗位是否符合你的求职方向，只影响匹配评分，不会代替抓取关键词。
 - 抓取城市：直接填写城市名称，例如“北京”。如果同时找多个城市，用逗号分隔，例如“北京,上海,杭州”，最多填写 5 个。系统会自动转换成三个平台各自使用的城市参数，转换规则见 [城市匹配说明](docs/city-codes.md)。
 - 经验、期望薪资和偏好城市：用于岗位评分和排序，不会修改招聘平台上的个人资料。
-- 简历内容：用于生成打招呼草稿，保存到本机的 `data/profile/resume.md`。
+- 简历内容：用于岗位能力匹配和生成打招呼草稿，只保存在本机数据目录中。
 - 模型 API Key：用于更准确地比较简历与岗位要求，也用于生成打招呼草稿。不填写时使用本地文字重合匹配，不会把简历发送到外部服务。
 
 简单理解：
@@ -119,9 +108,9 @@ npm run dev
 
 草稿保存前会扫描电话、邮箱、年龄、微信/QQ、证件、银行卡和网址；命中或扫描异常时不会保存。JD 会按不可信文本处理，避免其中的提示词指令影响生成。复制并手动发送后，可点击“登记已沟通”。
 
-## 数据备份与恢复
+## 数据保存与更新
 
-数据库迁移和全量删除前会先创建并校验备份。开发者可使用 `npm run db:status`、`npm run db:backup` 和 `npm run db:restore -- --from <备份> --confirm "RESTORE job-hunter.sqlite"`；恢复必须在服务完全停止后执行。
+岗位、设置、简历和登录状态保存在独立的用户数据目录中。安装新版或删除应用程序本身不会自动删除这些数据。程序在数据库升级和全量删除前会自动创建并校验备份；请勿在 Job Hunter 运行时手动移动或修改数据文件。
 
 ## 常见问题
 
@@ -167,7 +156,6 @@ Job Hunter 为三个平台分别使用独立的 Chrome 用户目录。请使用�
 
 - Windows 安装版的数据目录是 `%APPDATA%\JobHunter\data`。通常对应 `C:\Users\你的用户名\AppData\Roaming\JobHunter\data`。可按 `Win + R`，粘贴 `%APPDATA%\JobHunter\data` 后回车直接打开。
 - macOS 安装版的数据目录是 `~/Library/Application Support/JobHunter/data`。在 Finder 中选择“前往”→“前往文件夹”，粘贴该路径即可打开。
-- 源码运行时默认保存在项目目录下的 `data` 文件夹；如果设置了 `APP_DATA_DIR`，则以该路径为准。
 - 数据目录包含岗位数据库、设置、简历、日志和三个平台的独立 Chrome 登录目录。
 - 应用不会导出招聘平台 Cookie。
 - 只有手动点击抓取后，应用才会访问对应招聘平台。
