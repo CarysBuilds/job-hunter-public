@@ -4,9 +4,9 @@ export type ScoringMode = 'rules' | 'rules+llm';
 export type LifecycleStatus = 'active' | 'archived';
 export type CompanyType = 'unknown' | 'foreign' | 'listed' | 'mature' | 'startup' | 'outsourcing';
 export type CompanyWorkLife = 'unknown' | 'weekends' | 'big_small_week' | 'single_day_off' | 'overtime_risk';
-export type ContactStatus = 'unprocessed' | 'drafted' | 'greeted' | 'ready_to_apply' | 'applied' | 'interviewing' | 'rejected' | 'closed' | 'follow_up';
+export type ContactStatus = 'unprocessed' | 'drafted' | 'send_unknown' | 'greeted' | 'ready_to_apply' | 'applied' | 'interviewing' | 'rejected' | 'closed' | 'follow_up';
 export type ContactOutcome = 'offer' | 'accepted' | 'rejected' | 'withdrawn' | 'no_response';
-export type ContactCommunicationSource = 'manual' | 'legacy_unverified';
+export type ContactCommunicationSource = 'manual' | 'legacy_unverified' | 'template';
 export type CareerStage = 'internship' | 'new_grad' | 'experienced' | 'career_change';
 export type StrategyTemplate = 'general' | 'custom';
 export type SalesRiskTolerance = 'avoid' | 'balanced' | 'accept';
@@ -178,6 +178,7 @@ export interface CandidateProfile {
 }
 
 export interface UserSettings {
+  greetingTemplate?: string;
   setupCompleted: boolean;
   cityCode: string;
   cities: string[];
@@ -235,7 +236,7 @@ export interface CrawlConfig {
   adaptiveMinUnique: number;
 }
 
-export type RunOperation = 'crawl' | 'rescore';
+export type RunOperation = 'crawl' | 'rescore' | 'greeting';
 export type RunState = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'interrupted' | 'cancelled';
 export type RunFailureCategory = 'auth_required' | 'rate_limited' | 'page_structure' | 'configuration' | 'external_service' | 'data_processing' | 'worker_start' | 'worker_interrupted' | 'item_failure' | 'internal';
 

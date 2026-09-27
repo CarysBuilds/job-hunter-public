@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appConfig, getCrawlConfig } from './config.js';
 import { getRunService } from './services/run-service.js';
-import { getGreetingService, type GreetingGenerator } from './services/greeting-service.js';
+import type { GreetingGenerator } from './services/greeting-service.js';
+import { TemplateGreetingService, type TemplateGreetingBatch } from './services/template-greeting-service.js';
 import { getDetailRefresher, type DetailRefresher } from './services/detail-refresh-service.js';
 import { createRouter } from './server/routes.js';
 import { getStore } from './server/store.js';
@@ -46,11 +47,12 @@ export function createApp(dependencies: {
   store?: ReturnType<typeof getStore>;
   runs?: ReturnType<typeof getRunService>;
   greeting?: GreetingGenerator;
+  batch?: TemplateGreetingBatch;
   detailRefresher?: DetailRefresher;
 } = {}) {
   const store = dependencies.store ?? getStore();
   const runs = dependencies.runs ?? getRunService();
-  const greeting = dependencies.greeting ?? getGreetingService();
+  const greeting = dependencies.greeting ?? new TemplateGreetingService();
   const detailRefresher = dependencies.detailRefresher ?? getDetailRefresher();
   const app = express();
   app.disable('x-powered-by');
@@ -58,7 +60,7 @@ export function createApp(dependencies: {
   app.use(requireLocalAccess);
   app.use(requireMutationMarker);
   app.use(express.json({ limit: '200kb' }));
-  app.use('/api', createRouter(store, runs, greeting, detailRefresher));
+  app.use('/api', createRouter(store, runs, greeting, detailRefresher, dependencies.batch));
   app.use(express.static(appConfig.publicDir, {
     setHeaders: (res, path) => {
       if (/\.(?:html|js|css)$/.test(path)) res.setHeader('Cache-Control', 'no-store');

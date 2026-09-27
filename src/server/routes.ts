@@ -31,6 +31,8 @@ import type { ContactStatus, Grade, JobFilters, JobSource, RawJob, ScoredJob, Us
 import type { JobStore } from './store.js';
 import { exportDataset } from '../services/export-service.js';
 import { ensurePrivateFile } from '../file-security.js';
+import { KeywordsSchema } from '../keywords.js';
+import { TemplateGreetingBatch } from '../services/template-greeting-service.js';
 
 const APP_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
 const JobSourceSchema = z.enum(['boss', 'liepin', 'zhaopin']);
@@ -47,13 +49,13 @@ const JobQuerySchema = z.object({
 
 const CrawlBodySchema = z.object({
   sources: z.array(JobSourceSchema).default(['boss']),
-  keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(10),
+  keywords: KeywordsSchema,
   pages: z.number().int().min(1).max(20).default(1),
   minSalary: z.number().min(0).max(500).optional(),
   maxJobs: z.number().int().min(1).max(5_000).optional(),
 });
 
-const CONTACT_STATUSES = ['unprocessed', 'drafted', 'greeted', 'ready_to_apply', 'applied', 'interviewing', 'rejected', 'closed', 'follow_up'] as const;
+const CONTACT_STATUSES = ['unprocessed', 'drafted', 'send_unknown', 'greeted', 'ready_to_apply', 'applied', 'interviewing', 'rejected', 'closed', 'follow_up'] as const;
 const ContactPatchSchema = z.object({
   status: z.enum(CONTACT_STATUSES).optional(),
   greeted_at: z.string().datetime().nullable().optional(),
@@ -76,7 +78,8 @@ const UserSettingsPatchSchema = z.object({
   setupCompleted: z.boolean().optional(),
   cityCode: z.string().regex(/^\d{9}$/).optional(),
   cities: z.array(z.string().trim().min(1).max(20)).min(1).max(5).optional(),
-  keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20).optional(),
+  keywords: KeywordsSchema.optional(),
+  greetingTemplate: z.string().trim().max(500).optional(),
   platforms: z.object({
     boss: z.boolean().optional(),
     liepin: z.boolean().optional(),
@@ -154,9 +157,32 @@ export function createRouter(
   store: JobStore,
   runs: RunService,
   greeting: GreetingGenerator,
-  detailRefresher: DetailRefresher
+  detailRefresher: DetailRefresher,
+  batch = new TemplateGreetingBatch(store),
 ): Router {
   const router = Router();
+  router.use((req, res, next) => {
+    if (batch.busy && !['GET', 'HEAD'].includes(req.method) && !/^\/runs\/[^/]+\/cancel$/.test(req.path)) {
+      return void res.status(409).json({ ok: false, error: '正在发送模板，请等待结束或停止当前任务' });
+    }
+    next();
+  });
+
+  router.get('/greeting/candidates', (_req, res) => {
+    res.json({ ok: true, data: { jobs: batch.candidates(), limit: 20 } });
+  });
+  router.post('/greeting/preview', (req, res) => {
+    const parsed = z.object({ jobIds: z.array(z.string().min(1).max(200)).min(1).max(20) }).strict().safeParse(req.body);
+    if (!parsed.success) return sendValidationError(res, parsed.error);
+    try { res.json({ ok: true, data: batch.preview(parsed.data.jobIds) }); }
+    catch (error) { res.status(400).json({ ok: false, error: (error as Error).message }); }
+  });
+  router.post('/greeting/batch', (req, res) => {
+    const parsed = z.object({ token: z.string().uuid(), confirm: z.literal(true) }).strict().safeParse(req.body);
+    if (!parsed.success) return sendValidationError(res, parsed.error);
+    try { res.status(202).json({ ok: true, data: batch.start(parsed.data.token) }); }
+    catch (error) { res.status(409).json({ ok: false, error: (error as Error).message }); }
+  });
 
   router.get('/health', (_req: Request, res: Response) => {
     const latestRun = store.latestRun();
@@ -164,6 +190,7 @@ export function createRouter(
       ok: true,
       data: {
         version: APP_VERSION,
+        edition: 'friend',
         nodeVersion: process.version,
         platform: process.platform,
         schemaVersion: store.schemaVersion(),
@@ -270,7 +297,7 @@ export function createRouter(
   router.get('/runs/:runId', (req: Request, res: Response) => {
     const run = store.getRun(req.params.runId);
     if (!run) return void res.status(404).json({ ok: false, error: '任务不存在' });
-    res.json({ ok: true, data: { run, pages: store.listRunPages(run.id), observations: store.listRunObservations(run.id) } });
+    res.json({ ok: true, data: { run, pages: store.listRunPages(run.id), observations: store.listRunObservations(run.id), greetingAttempts: store.greetingAttempts(run.id) } });
   });
 
   router.post('/runs/:runId/retry', (req: Request, res: Response) => {
@@ -279,7 +306,8 @@ export function createRouter(
   });
 
   router.post('/runs/:runId/cancel', (req: Request, res: Response) => {
-    try { res.json({ ok: true, data: store.cancelRun(req.params.runId) }); }
+    try { res.json({ ok: true, data: store.getRun(req.params.runId)?.operation === 'greeting'
+      ? batch.cancel(req.params.runId) : store.cancelRun(req.params.runId) }); }
     catch (error) { res.status(409).json({ ok: false, error: (error as Error).message }); }
   });
 
@@ -403,7 +431,7 @@ export function createRouter(
     try {
       const result = await greeting.generate(job);
       const contact = store.updateJobContact(job.id, {
-        status: 'drafted',
+        status: ['unprocessed', 'drafted'].includes(job.contact?.status ?? 'unprocessed') ? 'drafted' : job.contact!.status,
         platform: job.source,
         last_message: result.text,
       });

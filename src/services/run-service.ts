@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { KeywordsSchema } from '../keywords.js';
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AuthRequiredError, createCrawler, PageStructureError, RateLimitError } from '../crawlers/index.js';
@@ -99,7 +100,7 @@ export class RunService {
 
   startCrawl(input: { source: JobSource; keywords: string[]; pages: number; minSalary?: number; maxJobs?: number }): CrawlRun {
     this.assertIdle();
-    const run = this.store.createRun({ operation: 'crawl', ...input });
+    const run = this.store.createRun({ operation: 'crawl', ...input, keywords: KeywordsSchema.parse(input.keywords) });
     if (this.options.crawlExecution !== 'inline') {
       return this.spawnCrawlWorker(run);
     }
@@ -109,7 +110,7 @@ export class RunService {
 
   async runCrawlNow(input: { source: JobSource; keywords: string[]; pages: number; minSalary?: number; maxJobs?: number }): Promise<CrawlRun> {
     this.assertIdle();
-    const run = this.store.createRun({ operation: 'crawl', ...input });
+    const run = this.store.createRun({ operation: 'crawl', ...input, keywords: KeywordsSchema.parse(input.keywords) });
     await this.executeCrawl(run);
     return this.store.getRun(run.id)!;
   }

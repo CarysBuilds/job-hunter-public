@@ -91,7 +91,7 @@ describe('前端生命周期烟测', () => {
     await page.waitForSelector('#setup-overlay:not(.hidden)');
     await page.waitForTimeout(150);
     assert.equal(await page.evaluate(() => (window as unknown as { x: number }).x), 0);
-    assert.equal(await page.locator('input[name="keywords"]').inputValue(), payload);
+    assert.equal(await page.locator('[name="keywords"]').inputValue(), payload);
     assert.equal(await page.locator('input[name="crawlCities"]').inputValue(), '北京');
     assert.match(await page.locator('.local-data-path').innerText(), /当前设置：/);
     assert.equal(await page.locator('input[name="cities"]').inputValue(), payload);
@@ -101,7 +101,7 @@ describe('前端生命周期烟测', () => {
   it('首页可渲染、可切换历史岗位，并在详情显示发现时间', async () => {
     const page = await browser.newPage();
     await page.goto(origin, { waitUntil: 'networkidle' });
-    assert.equal(await page.title(), 'Job Hunter — 岗位匹配评估');
+    assert.equal(await page.title(), 'Job Hunter Friend — 岗位与模板沟通');
     assert.equal(await page.locator('[data-login-source="boss"]').innerText(), '打开 BOSS 登录');
     assert.equal(await page.locator('[data-crawl-source]').count(), 3);
     assert.equal(await page.locator('#btn-setup').innerText(), '设置');
@@ -169,7 +169,7 @@ describe('前端生命周期烟测', () => {
     assert.match(detail, /首次发现/);
     assert.match(detail, /最近发现/);
     assert.match(detail, /BOSS/);
-    assert.match(detail, /生成打招呼草稿/);
+    assert.match(detail, /使用我的模板/);
     assert.match(detail, /需上传简历后进行能力匹配/);
     await page.close();
   });

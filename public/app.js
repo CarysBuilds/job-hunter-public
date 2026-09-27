@@ -5,6 +5,7 @@
     custom: { label: '自定义关键词', keywords: [] },
   };
   const DEFAULT_KEYWORDS = ['产品经理'];
+  const splitKeywords = (value) => [...new Set(value.split(/[,，、;；\r\n]+/).map((item) => item.trim()).filter(Boolean))];
   const state = { jobs: [], todayJobs: [], lifecycle: 'active', grade: 'all', source: 'all', sort: 'priority-desc', query: '', keywordPreset: 'custom', polling: false, settings: null, profile: null, view: 'today' };
   let loadSequence = 0;
   const byId = (id) => document.getElementById(id);
@@ -125,7 +126,7 @@
         return card;
       }));
       elements.todayQueues.replaceChildren(
-        queueCard('待沟通', pending, '生成草稿、复制后手动发送，再登记已沟通'),
+        queueCard('待沟通', pending, '使用自填模板；BOSS A/B 岗位可在“批量打招呼”中选择发送'),
         queueCard('到期跟进', followUps, '处理已到期的跟进提醒'),
         queueCard('待投递', ready, '确认材料后在招聘平台手动投递'),
         queueCard('面试中', interviewing, '补充面试安排与结果事件'),
@@ -192,6 +193,7 @@
   const contactLabels = {
     unprocessed: '未处理',
     drafted: '已生成草稿',
+    send_unknown: '发送待确认',
     greeted: '已打招呼',
     ready_to_apply: '待投递',
     applied: '已投递',
@@ -305,9 +307,9 @@
 
   function greetingSection(job) {
     const box = make('div', 'greeting-card');
-    const note = make('p', 'greeting-note', '生成前请先在“设置”中上传简历内容并填写模型 API Key。系统使用本地简历与当前 JD 生成草稿，不会自动发送。');
+    const note = make('p', 'greeting-note', '在“批量打招呼”中填写模板。这里可复制模板手动发送；BOSS A/B 岗位也可批量选择、预览并确认发送。');
     const actions = make('div', 'greeting-actions');
-    const generate = make('button', 'btn btn-primary', '生成打招呼草稿');
+    const generate = make('button', 'btn btn-primary', '使用我的模板');
     generate.type = 'button';
     const output = make('div', 'greeting-output hidden');
     const copy = make('button', 'btn btn-secondary hidden', '复制文案');
@@ -319,7 +321,7 @@
       generate.disabled = true;
       generate.textContent = '生成中…';
       output.className = 'greeting-output';
-      output.textContent = '正在结合你的经历与岗位职责组织文案…';
+      output.textContent = '正在读取已保存的模板…';
       copy.classList.add('hidden');
       try {
         const result = await api(`/api/jobs/${encodeURIComponent(job.id)}/greeting`, { method: 'POST' });
@@ -333,7 +335,7 @@
         output.textContent = error.message;
       } finally {
         generate.disabled = false;
-        generate.textContent = '重新生成草稿';
+        generate.textContent = '重新读取模板';
       }
     });
 
@@ -360,7 +362,7 @@
     });
     actions.append(generate, copy, register);
     box.append(note, actions, output);
-    return section('智能打招呼', box);
+    return section('模板打招呼', box);
   }
 
   function companyProfileSection(job) {
@@ -597,7 +599,8 @@
   function setupInput(labelText, name, value, attrs = {}) {
     const label = make('label');
     label.append(document.createTextNode(labelText));
-    const input = make('input', 'input');
+    const input = make(name === 'keywords' ? 'textarea' : 'input', 'input');
+    if (name === 'keywords') input.rows = 2;
     input.name = name;
     input.value = String(value ?? '');
     Object.entries(attrs).forEach(([key, attrValue]) => {
@@ -673,7 +676,7 @@
     );
     form.append(
       setupInput('抓取城市（直接填写城市名，多个城市用逗号分隔，最多 5 个）', 'crawlCities', (settings.cities || ['北京']).join(',')),
-      setupInput('抓取关键词（平台会按每个关键词逐一搜索，逗号分隔）', 'keywords', (settings.keywords || DEFAULT_KEYWORDS).join(',')),
+      setupInput('抓取关键词（中英文逗号或换行分隔，每个关键词单独搜索）', 'keywords', (settings.keywords || DEFAULT_KEYWORDS).join(',')),
       setupSelect('求职阶段', 'careerStage', [
         ['experienced', '社招'],
         ['career_change', '转岗'],
@@ -690,13 +693,16 @@
       setupInput('屏蔽公司（逗号分隔）', 'blockedCompanies', (profile.blockedCompanies || []).join(',')),
       setupInput('屏蔽关键词（逗号分隔）', 'blockedKeywords', (profile.blockedKeywords || []).join(',')),
       tracks,
-      setupInput('模型 API Base', 'llmBaseURL', settings.llm?.baseURL || ''),
-      setupInput('模型名称', 'llmModel', settings.llm?.model || ''),
-      setupInput('模型 API Key（用于简历-JD 语义匹配和打招呼草稿）', 'llmApiKey', '', {
-        type: 'password',
-        placeholder: settings.llm?.apiKey ? '已配置，留空则保持不变' : '',
-      }),
     );
+    const keywordPreview = make('p', 'muted');
+    const keywordInput = form.querySelector('[name="keywords"]');
+    const updateKeywordPreview = () => {
+      const words = splitKeywords(keywordInput.value);
+      keywordPreview.textContent = words.length ? `将分别搜索 ${words.length} 个关键词：${words.join(' / ')}` : '请填写至少一个抓取关键词';
+    };
+    keywordInput.addEventListener('input', updateKeywordPreview);
+    updateKeywordPreview();
+    keywordInput.parentElement.after(keywordPreview);
     const resumeLabel = make('label');
     resumeLabel.append(document.createTextNode('简历内容（保存到 data/profile/resume.md）'));
     const resume = make('textarea', 'input resume-input');
@@ -724,7 +730,7 @@
       event.preventDefault();
       save.disabled = true;
       const data = new FormData(form);
-      const keywords = String(data.get('keywords') || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const keywords = splitKeywords(String(data.get('keywords') || ''));
       const crawlCities = String(data.get('crawlCities') || '').split(/[,，]/).map((item) => item.trim()).filter(Boolean);
       const cities = String(data.get('cities') || '').split(',').map((item) => item.trim()).filter(Boolean);
       const locationScore = Object.fromEntries(cities.map((city) => [city, 5]));
@@ -739,12 +745,6 @@
             setupCompleted: true,
             cities: crawlCities.length ? crawlCities : ['北京'],
             keywords: keywords.length ? keywords : DEFAULT_KEYWORDS,
-            llm: {
-              enabled: Boolean(String(data.get('llmApiKey') || '').trim() || settings.llm?.apiKey),
-              baseURL: String(data.get('llmBaseURL') || settings.llm?.baseURL || '').trim(),
-              model: String(data.get('llmModel') || settings.llm?.model || '').trim(),
-              apiKey: String(data.get('llmApiKey') || '').trim() || undefined,
-            },
           }),
         });
         await api('/api/profile', {

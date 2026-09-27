@@ -10,7 +10,7 @@ if (process.platform !== 'win32') throw new Error('Windows 安装包烟测只能
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageInfo = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-const installer = resolve(root, 'artifacts', 'windows', 'JobHunter-Setup-x64.exe');
+const installer = resolve(root, 'artifacts', 'windows', 'JobHunter-Friend-Setup-x64.exe');
 if (!existsSync(installer)) throw new Error(`未找到 Windows 安装包：${installer}`);
 
 async function freePort() {
@@ -82,12 +82,21 @@ try {
   });
   const health = await waitForHealth(port);
   if (health.version !== packageInfo.version) throw new Error(`版本健康检查失败：${health.version}`);
+  if (health.edition !== 'friend') throw new Error('安装的不是朋友版');
   if (health.nodeVersion !== process.version) throw new Error(`Node 健康检查失败：${health.nodeVersion}`);
   if (health.platform !== 'win32') throw new Error(`平台健康检查失败：${health.platform}`);
   if (health.schemaVersion !== 2) throw new Error(`schema 健康检查失败：${health.schemaVersion}`);
 
   const home = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) });
-  if (!home.ok || !(await home.text()).includes('Job Hunter')) throw new Error('Windows 首页烟测失败');
+  const html = await home.text();
+  if (!home.ok || !html.includes('Job Hunter Friend') || !html.includes('friend-template')) throw new Error('Windows 朋友版首页烟测失败');
+  const headers = { 'content-type': 'application/json', 'x-job-hunter-request': '1' };
+  const configResponse = await fetch(`http://127.0.0.1:${port}/api/config`, {
+    method: 'PUT', headers, body: JSON.stringify({ keywords: ['产品经理，产品运营'], greetingTemplate: '您好，希望进一步沟通。' }),
+  });
+  const config = await configResponse.json();
+  if (!configResponse.ok || config.data.keywords.join('|') !== '产品经理|产品运营'
+    || config.data.greetingTemplate !== '您好，希望进一步沟通。') throw new Error('安装包关键词/模板设置烟测失败');
   await stopChild(child);
   child = undefined;
 

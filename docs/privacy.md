@@ -1,17 +1,14 @@
-# Privacy
+# 隐私说明
 
-Job Hunter is local-first.
+Job Hunter Friend 在本机运行，默认界面地址为 `http://127.0.0.1:17322`，仅允许本机访问。
 
-- Settings, profile, database, resume, logs, and Chrome profiles are stored locally.
-- The local web server binds to `127.0.0.1:17321` by default and validates the socket address, Host, Origin, `Sec-Fetch-Site`, and a private write-request marker.
-- Cookies remain inside Chrome user-data directories.
-- The app does not upload your job database.
-- The app does not run scheduled background crawls.
-- Platform crawling only starts after a manual user action.
-- When an LLM API is configured, job matching and greeting generation send your resume and the relevant job description to that API. Without an API, resume matching remains local.
-- The public build saves generated greetings as drafts and never sends them automatically.
-- Greeting drafts are rejected when privacy scanning finds contact, identity, banking, or URL data, or when the scanner fails.
-- On macOS/Linux, private directories use mode `0700` and private files use `0600`.
-- API responses do not reveal raw local file paths or model keys.
+- 岗位数据库、求职偏好、简历、打招呼模板、发送记录和平台登录状态保存到本机。
+- 朋友版关闭模型 API，简历匹配在本机进行。
+- 只有手动启动抓取后，程序才会采集对应平台的岗位。
+- 在预览名单和文案并确认发送后，程序会向选中的 BOSS 岗位发送你保存的模板。模板中的内容会被招聘者看到。
+- 模板按原文发送，请自行检查其中包含的信息；程序不会根据简历编写或补充个人经历。
+- 程序保留发送尝试和回执结果，避免中断或重启后重复发送。
+- 平台 Cookie 保存在独立 Chrome 登录目录内，不提供 Cookie 导出。
+- 导出的岗位和沟通记录可能包含个人信息，请检查后再分享。
 
-Do not publish files from `%AppData%\JobHunter\data`, `~/Library/Application Support/JobHunter/data`, or local `data/`.
+不要公开 `%APPDATA%\JobHunterFriend\data` 或源码运行时的 `data/` 文件夹。

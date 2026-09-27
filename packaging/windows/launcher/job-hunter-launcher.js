@@ -6,10 +6,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 const installDir = dirname(dirname(dirname(process.execPath)));
 const appDir = resolve(installDir, 'app');
 const dataDir = process.env.APPDATA
-  ? resolve(process.env.APPDATA, 'JobHunter', 'data')
+  ? resolve(process.env.APPDATA, 'JobHunterFriend', 'data')
   : resolve(installDir, 'data');
 const pidPath = resolve(dataDir, 'job-hunter.pid');
-const port = Number(process.env.PORT || 17321);
+const port = Number(process.env.PORT || 17322);
 
 function isAlive(pid) {
   if (!pid || Number.isNaN(pid)) return false;
@@ -24,7 +24,8 @@ function isAlive(pid) {
 async function health() {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(800) });
-    return response.ok;
+    const body = await response.json();
+    return response.ok && body?.data?.edition === 'friend';
   } catch {
     return false;
   }
@@ -61,7 +62,7 @@ async function main() {
   });
   child.unref();
   writeFileSync(pidPath, String(child.pid), 'utf8');
-  await waitForServer();
+  if (!await waitForServer()) throw new Error(`Job Hunter Friend 未能启动，请检查端口 ${port} 是否被占用`);
   await import('node:child_process').then(({ execFile }) => execFile('cmd.exe', ['/c', 'start', '', `http://127.0.0.1:${port}`]));
 }
 

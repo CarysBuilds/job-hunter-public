@@ -22,7 +22,6 @@ const denyContent = [
   /BOSS_GREETING_SEND_ENABLED/,
   /AUTO_GREETING_/,
   /真实发送/,
-  /批量打招呼/,
   /AI\s*商务(?:主线|转型试投|模板)/i,
   /ai_business_(?:primary|transition)/i,
 ];

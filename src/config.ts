@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { KeywordsSchema, splitKeywords } from './keywords.js';
 import type { CandidateProfile, CrawlConfig, JobSource, UserSettings } from './types.js';
 import { CITY_CODES, cityNameFromBossCode, normalizeCityName } from './cities.js';
 import { enablePrivateFileCreation, ensurePrivateDirectory, ensurePrivateFile, writePrivateTextFile } from './file-security.js';
@@ -30,13 +31,13 @@ const intFromString = (defaultValue: number, min: number, max: number) =>
 function defaultDataDir(): string {
   if (process.platform === 'win32') {
     const appData = process.env.APPDATA || resolve(homedir(), 'AppData', 'Roaming');
-    return resolve(appData, 'JobHunter', 'data');
+    return resolve(appData, 'JobHunterFriend', 'data');
   }
-  return './data';
+  return './data/friend';
 }
 
 const EnvSchema = z.object({
-  PORT: intFromString(17321, 1, 65535),
+  PORT: intFromString(17322, 1, 65535),
   APP_HOST: z.enum(['127.0.0.1', 'localhost', '::1']).default('127.0.0.1'),
   APP_DATA_DIR: z.string().default(defaultDataDir()),
   LLM_API_BASE: z.string().url().default('https://api.deepseek.com/v1'),
@@ -52,9 +53,9 @@ const EnvSchema = z.object({
   CRAWL_DELAY_MAX_MS: intFromString(8_000, 0, 120_000),
   CRAWL_KEYWORDS: z.string().default(''),
   BOSS_ADAPTIVE_MIN_UNIQUE: intFromString(2, 0, 100),
-  BOSS_CDP_PORT: intFromString(9222, 1024, 65535),
-  LIEPIN_CDP_PORT: intFromString(9223, 1024, 65535),
-  ZHAOPIN_CDP_PORT: intFromString(9224, 1024, 65535),
+  BOSS_CDP_PORT: intFromString(9322, 1024, 65535),
+  LIEPIN_CDP_PORT: intFromString(9323, 1024, 65535),
+  ZHAOPIN_CDP_PORT: intFromString(9324, 1024, 65535),
   CRAWL_CITY_CODE: z.string().regex(/^\d{9}$/).default('101010100'),
   ARCHIVE_A_DAYS: intFromString(30, 1, 365),
   ARCHIVE_B_DAYS: intFromString(21, 1, 365),
@@ -113,8 +114,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     timeoutMs: parsed.LLM_TIMEOUT_MS,
   },
   publicMode: {
-    draftedOnlyGreeting: true,
-    batchGreetingEnabled: false,
+    draftedOnlyGreeting: false,
+    batchGreetingEnabled: true,
   },
 };
 
@@ -122,7 +123,8 @@ const SettingsSchema = z.object({
   setupCompleted: z.boolean().default(false),
   cityCode: z.string().regex(/^\d{9}$/).default(DEFAULT_USER_SETTINGS.cityCode),
   cities: z.array(z.string().trim().min(1).max(20)).min(1).max(5).default(DEFAULT_USER_SETTINGS.cities),
-  keywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20).default(DEFAULT_USER_SETTINGS.keywords),
+  keywords: KeywordsSchema.default(DEFAULT_USER_SETTINGS.keywords),
+  greetingTemplate: z.string().max(500).default(''),
   platforms: z.object({
     boss: z.boolean().default(DEFAULT_USER_SETTINGS.platforms.boss),
     liepin: z.boolean().default(DEFAULT_USER_SETTINGS.platforms.liepin),
@@ -136,8 +138,8 @@ const SettingsSchema = z.object({
     timeoutMs: z.number().int().min(1_000).max(120_000).default(DEFAULT_USER_SETTINGS.llm.timeoutMs),
   }).default(DEFAULT_USER_SETTINGS.llm),
   publicMode: z.object({
-    draftedOnlyGreeting: z.boolean().default(true),
-    batchGreetingEnabled: z.boolean().default(false),
+    draftedOnlyGreeting: z.boolean().default(false),
+    batchGreetingEnabled: z.boolean().default(true),
   }).default(DEFAULT_USER_SETTINGS.publicMode),
 });
 
@@ -233,8 +235,8 @@ export function setupStatus() {
 
 export function getEffectiveLlmConfig() {
   const settings = loadUserSettings();
-  const apiKey = parsed.LLM_API_KEY || settings.llm.apiKey;
-  const enabled = (parsed.LLM_ENABLED || settings.llm.enabled) && apiKey.length > 0;
+  const apiKey = '';
+  const enabled = false;
   return {
     enabled,
     baseURL: parsed.LLM_API_KEY ? parsed.LLM_API_BASE : settings.llm.baseURL,
@@ -280,7 +282,7 @@ export const appConfig = {
 
 export function getCrawlConfig(overrides: Partial<CrawlConfig> = {}): CrawlConfig {
   const settings = loadUserSettings();
-  const envKeywords = parsed.CRAWL_KEYWORDS.split(',').map((item) => item.trim()).filter(Boolean);
+  const envKeywords = splitKeywords(parsed.CRAWL_KEYWORDS);
   const delayMinMs = parsed.CRAWL_DELAY_MIN_MS;
   const delayMaxMs = Math.max(delayMinMs, parsed.CRAWL_DELAY_MAX_MS);
   const ports: Record<JobSource, number> = {

@@ -43,7 +43,7 @@ function safeJson<T>(raw: string, fallback: T): T {
 
 const RUN_HEARTBEAT_STALE_MS = 2 * 60 * 1000;
 export const CURRENT_SCHEMA_VERSION = 2;
-const PROTECTED_CONTACT_STATUSES: ContactStatus[] = ['drafted', 'greeted', 'ready_to_apply', 'applied', 'interviewing', 'follow_up'];
+const PROTECTED_CONTACT_STATUSES: ContactStatus[] = ['drafted', 'send_unknown', 'greeted', 'ready_to_apply', 'applied', 'interviewing', 'follow_up'];
 type ArchiveDaysConfig = number | Partial<Record<Grade, number>>;
 
 function isProcessAlive(pid: number | null | undefined): boolean {
@@ -993,6 +993,36 @@ export class JobStore {
       counts.total += Number(row.count);
     }
     return counts;
+  }
+
+  private ensureGreetingLedger(): void {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS template_greeting_attempts (
+      url TEXT PRIMARY KEY, job_id TEXT NOT NULL, run_id TEXT NOT NULL,
+      message TEXT NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+  }
+
+  greetingAttempted(url: string): boolean {
+    this.ensureGreetingLedger();
+    return Boolean(this.db.prepare('SELECT 1 FROM template_greeting_attempts WHERE url = ?').get(url));
+  }
+
+  reserveGreeting(url: string, jobId: string, runId: string, message: string): void {
+    this.ensureGreetingLedger();
+    this.db.prepare(`INSERT INTO template_greeting_attempts (url, job_id, run_id, message, state, detail, updated_at)
+      VALUES (?, ?, ?, ?, 'unknown', '发送处理中或结果待确认', ?)`).run(url, jobId, runId, message, new Date().toISOString());
+  }
+
+  finishGreeting(url: string, state: 'sent' | 'unknown', detail: string): void {
+    this.db.prepare('UPDATE template_greeting_attempts SET state = ?, detail = ?, updated_at = ? WHERE url = ?')
+      .run(state, detail, new Date().toISOString(), url);
+  }
+
+  greetingAttempts(runId: string): Array<{ jobId: string; state: string; detail: string }> {
+    this.ensureGreetingLedger();
+    return this.db.prepare('SELECT job_id AS jobId, state, detail FROM template_greeting_attempts WHERE run_id = ? ORDER BY updated_at')
+      .all(runId) as Array<{ jobId: string; state: string; detail: string }>;
   }
 
   createRun(input: { operation: RunOperation; source?: JobSource; keywords?: string[]; pages?: number; minSalary?: number; maxJobs?: number }): CrawlRun {

@@ -1087,3 +1087,7 @@ tr.expanded .expand-icon {
     text-align: left;
   }
 }
+.friend-candidate { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.friend-candidate input { flex-shrink: 0; width: 18px; height: 18px; }
+#friend-candidates { max-height: 420px; overflow-y: auto; margin-bottom: 16px; }
+#friend-preview-text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; }

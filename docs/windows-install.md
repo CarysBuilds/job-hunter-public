@@ -1,26 +1,19 @@
-# Windows Installation
+# Windows 朋友版安装说明
 
-Job Hunter is packaged for Windows 10/11 x64 and bundles Node.js 24.
+1. 安装 Google Chrome。
+2. 双击 `JobHunter-Friend-Setup-x64.exe`，按提示安装。
+3. 从桌面或开始菜单打开 **Job Hunter Friend**。
+4. 浏览器未自动打开时，访问 [本机操作界面](http://127.0.0.1:17322)。
 
-## Install
+支持 Windows 10/11 x64，运行环境已包含在安装包中。Chrome 需单独安装。
 
-1. Download `JobHunter-Setup-x64.exe` from GitHub Releases.
-2. Run the installer.
-3. Launch Job Hunter from the Start Menu or desktop shortcut.
+## 数据目录
 
-The installer uses per-user locations:
+- 程序：`%LOCALAPPDATA%\Programs\JobHunterFriend`
+- 个人数据：`%APPDATA%\JobHunterFriend\data`
 
-- App files: `%LocalAppData%\Programs\JobHunter`
-- User data: `%AppData%\JobHunter\data`
-- Logs: `%AppData%\JobHunter\data\logs`
-- Chrome profiles: `%AppData%\JobHunter\data\auth`
+模板、简历、岗位和登录状态都保存在个人数据目录，与公开通用版分开。
 
-## Chrome
+## 卸载
 
-Chrome is not bundled. Job Hunter looks for Chrome in common Windows locations and also supports `CHROME_PATH`.
-
-## Uninstall
-
-Use Windows Apps settings or the Start Menu uninstall entry. User data may be kept so you can reinstall without losing jobs.
-
-To remove all local data after uninstalling, close Job Hunter and its three Chrome windows, press `Win + R`, enter `%APPDATA%\JobHunter\data`, and delete that folder. Its usual full path is `C:\Users\<your-name>\AppData\Roaming\JobHunter\data`.
+在 Windows 应用设置中卸载 Job Hunter Friend。卸载会保留个人数据，方便重新安装。需要彻底删除时，先退出程序和它打开的 Chrome 窗口，再删除上述个人数据目录。

@@ -1,5 +1,6 @@
 import type { CrawlConfig, JobSource, RawJob } from '../types.js';
 import { canonicalizeJobUrl } from '../job-id.js';
+import { KeywordsSchema } from '../keywords.js';
 
 export function crawlJobKey(job: RawJob): string {
   const platformId = job.crawl_observation?.platformJobId?.trim();
@@ -66,6 +67,7 @@ export abstract class BaseCrawler {
     onProgress?: (progress: CrawlProgress) => void | Promise<void>,
     options: CrawlOptions = {},
   ): Promise<RawJob[]> {
+    keywords = KeywordsSchema.parse(keywords);
     await this.ensureReady();
     this.storedDetailProvider = options.getStoredDetail;
     this.crawlSeenJobKeys = new Set(options.seenJobKeys ?? []);

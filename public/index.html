@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Job Hunter — 岗位匹配评估</title>
+  <title>Job Hunter Friend — 岗位与模板沟通</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="app-header">
     <div class="header-left">
-      <h1>Job Hunter</h1>
-      <span class="subtitle">本地岗位抓取与匹配评估 · 桌面公共版</span>
+      <h1>Job Hunter Friend</h1>
+      <span class="subtitle">本地岗位匹配 · 自填模板 · 无需 API</span>
     </div>
     <div class="header-right">
       <button id="btn-refresh" class="btn btn-secondary">刷新数据</button>
@@ -28,6 +28,7 @@
   <nav class="primary-nav" aria-label="工作台导航">
     <button class="nav-tab active" data-view="today">今日行动</button>
     <button class="nav-tab" data-view="jobs">全部岗位</button>
+    <button class="nav-tab" data-view="greeting">批量打招呼</button>
     <button class="nav-tab" data-view="profile">我的资料</button>
     <button class="nav-tab" data-view="more">更多</button>
   </nav>
@@ -40,7 +41,7 @@
 
   <main id="today-view" class="workspace-view">
     <div class="workspace-heading">
-      <div><h2>今日行动</h2><p class="muted">只呈现下一步动作；沟通内容始终是草稿，由你复制并手动发送。</p></div>
+      <div><h2>今日行动</h2><p class="muted">查看待办；在“批量打招呼”中选择 A/B 岗位并确认发送自己的模板。</p></div>
       <button id="btn-today-refresh" class="btn btn-secondary">刷新队列</button>
     </div>
     <div id="today-summary" class="stats-row"></div>
@@ -128,9 +129,44 @@
     </table>
     <div id="empty-state" class="empty-state hidden">
       <p id="empty-title">暂无数据</p>
-      <p id="empty-hint" class="muted">点击任一平台抓取按钮获取岗位，或用 <code>npm run mock</code> 生成测试数据</p>
+      <p id="empty-hint" class="muted">先保存抓取关键词并登录，再点击对应平台的抓取按钮。</p>
     </div>
   </div>
+  </main>
+
+  <main id="greeting-view" class="workspace-view hidden">
+    <div class="workspace-heading"><div><h2>BOSS 批量打招呼</h2><p class="muted">选择尚未沟通的 A/B 岗位，预览后确认发送。每批最多 20 条，逐条发送。</p></div></div>
+    <section class="info-panel">
+      <label for="friend-template">我的打招呼模板（原样发送，最多 500 字符）</label>
+      <textarea id="friend-template" class="input resume-input" rows="5" maxlength="500" placeholder="填写希望向招聘者发送的自我介绍"></textarea>
+      <p class="muted">不需要 API 或简历。请只填写你希望发给招聘者的内容；所有选中岗位使用相同文案。</p>
+      <button id="friend-save" class="btn btn-secondary">保存模板</button>
+    </section>
+    <section class="info-panel">
+      <div class="button-row">
+        <button id="friend-refresh" class="btn btn-secondary">刷新候选</button>
+        <button id="friend-select-a" class="btn btn-secondary">选择 A 档</button>
+        <button id="friend-select-b" class="btn btn-secondary">选择 B 档</button>
+        <button id="friend-select-ab" class="btn btn-secondary">选择 A+B 档</button>
+        <button id="friend-clear" class="btn btn-secondary">清空选择</button>
+      </div>
+      <p id="friend-count" class="muted" aria-live="polite"></p>
+      <div id="friend-candidates"></div>
+      <button id="friend-preview" class="btn btn-primary">预览选中的岗位与文案</button>
+    </section>
+    <section id="friend-confirmation" class="info-panel hidden">
+      <h3>确认发送</h3>
+      <p>确认后，程序会在 BOSS 上向以下岗位逐条发送这段文案。模板变更后请重新预览。</p>
+      <pre id="friend-preview-text" class="greeting-output"></pre>
+      <ul id="friend-preview-jobs"></ul>
+      <button id="friend-send" class="btn btn-primary">确认并发送</button>
+    </section>
+    <section class="info-panel">
+      <p id="friend-status" role="status" aria-live="polite">保存模板并刷新候选后开始。</p>
+      <button id="friend-stop" class="btn btn-secondary hidden">停止后续发送</button>
+      <button id="friend-reconnect" class="btn btn-secondary hidden">重新连接任务</button>
+      <div id="friend-results"></div>
+    </section>
   </main>
 
   <main id="profile-view" class="workspace-view hidden">
@@ -177,5 +213,6 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="friend.js"></script>
 </body>
 </html>
