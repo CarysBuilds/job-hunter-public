@@ -90,7 +90,7 @@
         status(`${data.run.message}${data.run.error ? `：${data.run.error}` : ''}`);
         byId('friend-results').replaceChildren(...data.greetingAttempts.map((attempt) => {
           const job = jobs.find((item) => item.id === attempt.jobId);
-          return node('p', `${job?.title || '岗位'}：${attempt.state === 'sent' ? '已发送' : '发送待确认'} — ${attempt.detail}`);
+          return node('p', `${attempt.title || job?.title || attempt.jobId}${attempt.company ? ` · ${attempt.company}` : ''}：${attempt.state === 'sent' ? '已发送' : '发送待确认'} — ${attempt.detail}`);
         }));
         if (!active) { runId = null; await refresh(); break; }
         await new Promise((resolve) => setTimeout(resolve, 1500));

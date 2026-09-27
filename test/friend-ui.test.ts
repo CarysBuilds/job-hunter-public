@@ -72,6 +72,7 @@ it('朋友版界面：逐词预览、自填模板、A/B选择、确认和结果'
     await page.reload();
     await page.getByRole('button', { name: '批量打招呼', exact: true }).click();
     await page.getByText('可选 0 个（A 0 / B 0），已选 0/20 个').waitFor();
+    await page.locator('#friend-results').getByText(/产品运营示例 A · 示例企业 A：已发送/).waitFor();
     assert.deepEqual(errors, []);
   } finally {
     await batch.waitForIdle();

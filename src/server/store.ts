@@ -1019,10 +1019,12 @@ export class JobStore {
       .run(state, detail, new Date().toISOString(), url);
   }
 
-  greetingAttempts(runId: string): Array<{ jobId: string; state: string; detail: string }> {
+  greetingAttempts(runId: string): Array<{ jobId: string; title: string | null; company: string | null; state: string; detail: string }> {
     this.ensureGreetingLedger();
-    return this.db.prepare('SELECT job_id AS jobId, state, detail FROM template_greeting_attempts WHERE run_id = ? ORDER BY updated_at')
-      .all(runId) as Array<{ jobId: string; state: string; detail: string }>;
+    return this.db.prepare(`SELECT a.job_id AS jobId, j.title, j.company, a.state, a.detail
+      FROM template_greeting_attempts a LEFT JOIN jobs j ON j.id = a.job_id
+      WHERE a.run_id = ? ORDER BY a.updated_at`)
+      .all(runId) as Array<{ jobId: string; title: string | null; company: string | null; state: string; detail: string }>;
   }
 
   createRun(input: { operation: RunOperation; source?: JobSource; keywords?: string[]; pages?: number; minSalary?: number; maxJobs?: number }): CrawlRun {
